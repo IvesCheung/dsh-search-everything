@@ -1,0 +1,61 @@
+{
+  "name": "dsh-search-everything",
+  "version": "0.1.0",
+  "description": "Everything-style global search for DSH: Ctrl+K over every session message, jump straight to the hit.",
+  "type": "module",
+  "license": "MIT",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./engine": "./lib/engine.js",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "search",
+    "session-search",
+    "palette",
+    "everything"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/IvesCheung/dsh-search-everything.git"
+  },
+  "homepage": "https://github.com/IvesCheung/dsh-search-everything#readme",
+  "bugs": {
+    "url": "https://github.com/IvesCheung/dsh-search-everything/issues"
+  },
+  "author": "Ives Cheung",
+  "scripts": {
+    "prepublishOnly": "node scripts/build.mjs",
+    "build": "node scripts/build.mjs",
+    "test": "node --test test/",
+    "bench": "node scripts/bench.mjs"
+  },
+  "engines": {
+    "node": ">=22.15"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "engines": {
+      "dsh": ">=0.2.2-rc.3"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
+    }
+  }
+}
