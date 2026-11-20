@@ -5,7 +5,8 @@ across **every session of every workspace** — session titles, your own message
 then hit Enter to jump straight to that message inside the conversation and highlight it.
 
 - One search box, four tabs: All / Sessions / My messages / Assistant replies
-- Index lives in the host process; a query over ~30 MB / 18k messages takes 10–90 ms
+- Index lives in the host process and is persisted to disk: a restart restores it in ~0.3 s instead of
+  re-parsing every log, and a query over ~30 MB / 18k messages takes 10–90 ms
 - Clicking a result switches workspace, switches session, scrolls to the message and flashes it
 - Local only: reads `~/.dsh/sessions`, no upload, no network, no telemetry
 
@@ -75,9 +76,10 @@ So the simplest path stays: an in-memory document array with a pre-lowercased `l
         │  zstd inflate + per-line JSON (only user/message, assistant/message, session/title, session header)
         ▼
 Host half (src/engine.ts)  — in-memory index: { sid, title, cwd, role, seq, time, text, lower }
-        │  full build asynchronously after start; afterwards rescanned on demand — no background polling
+        │  restored from $DSH_HOME/storages/dsh-search-everything when present, full build otherwise;
+        │  afterwards rescanned on demand — no background polling
         ▼
-GET /dsh-search-everything-api/{refresh,query,sessions,doc,stats}   (loopback only)
+GET /dsh-search-everything-api/{refresh,query,sessions,doc,stats,flush}   (loopback only)
         ▼
 Browser half (client.js)  — Ctrl K palette, list rendering, keyboard handling, jump & highlight
 ```
@@ -103,11 +105,19 @@ rendering), then:
    `scrollIntoView` gets snapped back), and finally `scrollIntoView({block:'center'})` plus a
    2.6 s highlight.
 
-**Refreshing is on demand, not on a timer.** The index is built once after start (about 15 s for
-31 MB of session text) and then never touched until something asks for it: the palette calls
-`/refresh` the moment it opens, which stats every session file and re-reads only those whose
-mtime/size changed — 0.8 s when nothing changed, and the usual case (one session being written) is
-one file. Between openings the plugin does zero disk I/O, so an idle host stays idle.
+**The index survives restarts.** Building it means inflating and parsing every session log — about
+4.6 s for 229 sessions / 31 MB, and far worse on a cold page cache. So the documents are written to
+`$DSH_HOME/storages/dsh-search-everything/` as `index.meta.json` (one stat entry and the title/cwd
+per session file) plus `docs.ndjson` (one JSON tuple per message), and the next start reads them back
+in **~340 ms**, then does one incremental pass that re-reads only the files whose mtime or size
+changed. Writes are debounced by 1.2 s and atomic (temp file + rename), so a crash leaves the previous
+index intact; a version or session-root mismatch discards the cache and rebuilds.
+
+**Refreshing is on demand, not on a timer.** After that the index is never touched until something
+asks for it: the palette calls `/refresh` the moment it opens, which stats every session file and
+re-reads only those whose mtime/size changed — a few hundred milliseconds when nothing changed, and
+the usual case (one session being written) is one file. Between openings the plugin does zero disk
+I/O, so an idle host stays idle.
 
 ## Configuration
 
@@ -122,14 +132,17 @@ In the `config` block of `cordis.patch.yml`:
         lazyRefreshMs: 0          # if > 0, query/sessions rescan first when the last scan is older than this
         maxResults: 50            # per-query result cap
         sessionsRoot: ''          # session root; defaults to $DSH_HOME/sessions or ~/.dsh/sessions
+        cacheDir: ''              # disk index dir; defaults to $DSH_HOME/storages/dsh-search-everything
+                                  # (set to a literal "-" to disable persistence and rebuild every start)
 ```
 
 ## Development
 
 ```bash
 npm run build     # src/*.ts -> lib/*.js (Node built-in stripTypeScriptTypes, no third-party deps)
-npm test          # node --test test/ (8 cases over synthetic corpora: indexing/filtering/refresh/corrupt files)
+npm test          # node --test test/ (11 cases over synthetic corpora: indexing/filtering/refresh/cache/corrupt files)
 npm run bench     # index build and query timings on the real corpus
+node scripts/bench-cache.mjs   # cold build vs warm restore on the real corpus
 ```
 
 `client.js` is hand-written with **no build step**: it uses DSH's `window.__ModuleLoader__.load`
@@ -142,8 +155,10 @@ dependencies.
 ## Known limitations
 
 - Web only (`dsh.client.platform = web`); the desktop shell is not adapted.
-- The index is in process memory, so a cold start rescans everything (~4–17 s for 30 MB; during
-  that window `/query` returns empty results with `indexing: true`). No persisted index file yet.
+- The very first start (no disk index yet) still rescans everything (~4–17 s for 30 MB; during that
+  window `/query` returns empty results with `indexing: true`). Every later start restores from disk.
+- The index file is roughly 1.2× the indexed text (37 MB for 31 MB of messages), because it stores
+  the original text; the lowercased copy is rebuilt on load rather than stored.
 - Only the first 8000 characters of a single message are indexed.
 - Jumping matches text excerpts inside the DOM: when the target message is almost entirely markup
   (pure tables, pure code blocks) the precision degrades, and the plugin falls back to opening the

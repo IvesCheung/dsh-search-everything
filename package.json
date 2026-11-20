@@ -1,6 +1,6 @@
 {
   "name": "dsh-search-everything",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Everything-style global search for DSH: Ctrl+K over every session message, jump straight to the hit.",
   "type": "module",
   "license": "MIT",

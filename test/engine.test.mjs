@@ -197,3 +197,78 @@ test('权限不足或损坏的会话文件不会拖垮索引', () => {
     cleanup(root)
   }
 })
+
+test('磁盘索引：写盘后新实例直接恢复，跳过全量解压', () => {
+  const root = seed()
+  const cacheDir = tempRoot('cache')
+  try {
+    const engine = new SearchEngine(root, cacheDir)
+    const cold = engine.reindexSync()
+    assert.equal(cold.cache.hit, false, '首次没有缓存')
+    assert.ok(engine.flush(), '有变化时应写盘')
+    assert.ok(fs.existsSync(cacheDir + '/index.meta.json'))
+    assert.ok(fs.existsSync(cacheDir + '/docs.ndjson'))
+
+    const warm = new SearchEngine(root, cacheDir)
+    const stats = warm.reindexSync()
+    assert.equal(stats.cache.hit, true, '第二次应从磁盘恢复')
+    assert.equal(stats.docs, cold.docs, '恢复出来的文档数一致')
+    assert.equal(stats.sessions, cold.sessions)
+    assert.equal(warm.search('Jellyfin', 50, { role: 'user' }).total, 1, '恢复后检索结果不变')
+    assert.equal(warm.search('Alpha', 10).hits[0].role, 'title', 'title 伪文档也还原了')
+    assert.equal(warm.doc('session-alpha', 2, 'Jellyfin').at, 5, 'doc() 的命中偏移照旧')
+  } finally {
+    cleanup(root)
+    fs.rmSync(cacheDir, { recursive: true, force: true })
+  }
+})
+
+test('磁盘索引：会话文件变了只重读该文件', () => {
+  const root = seed()
+  const cacheDir = tempRoot('cache2')
+  try {
+    const first = new SearchEngine(root, cacheDir)
+    first.reindexSync()
+    first.flush()
+
+    // 给 alpha 追加一条新消息（模拟会话继续写）
+    writeSession(root, 'C--work-alpha', 'session-alpha', [
+      sessionHeader('session-alpha', 'C:\\work\\alpha'),
+      sessionTitle(1, 'Alpha 插件调研'),
+      userMessage(2, '帮我看看 Jellyfin 在 NAS 上跑得怎么样'),
+      assistantMessage(3, 'Jellyfin 的媒体库需要开启 EnablePhotos'),
+      userMessage(8, '新增一条完全不一样的文本 zeta'),
+    ])
+
+    const warm = new SearchEngine(root, cacheDir)
+    const stats = warm.reindexSync()
+    assert.equal(stats.cache.hit, true)
+    assert.equal(warm.search('zeta', 10).total, 1, '恢复后补上了新增的消息')
+  } finally {
+    cleanup(root)
+    fs.rmSync(cacheDir, { recursive: true, force: true })
+  }
+})
+
+test('磁盘索引：版本或根目录不一致时作废重扫', () => {
+  const root = seed()
+  const cacheDir = tempRoot('cache3')
+  try {
+    const first = new SearchEngine(root, cacheDir)
+    first.reindexSync()
+    first.flush()
+
+    const metaPath = cacheDir + '/index.meta.json'
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'))
+    meta.version = -1
+    fs.writeFileSync(metaPath, JSON.stringify(meta))
+
+    const stale = new SearchEngine(root, cacheDir)
+    const stats = stale.reindexSync()
+    assert.equal(stats.cache.hit, false, '旧版本缓存不该被信任')
+    assert.ok(stats.docs > 0, '仍然照常建库')
+  } finally {
+    cleanup(root)
+    fs.rmSync(cacheDir, { recursive: true, force: true })
+  }
+})

@@ -10,7 +10,7 @@
  * 所以真正做到「打字就有」。
  */
 window.__ModuleLoader__.load({
-  id: '@local/dsh-search-everything',
+  id: 'dsh-search-everything',
   factory: (require) => {
     const exports = {}
 
@@ -37,24 +37,35 @@ window.__ModuleLoader__.load({
       '.dse_tab{font-size:12px;line-height:20px;padding:2px 10px;border-radius:999px;cursor:pointer;border:0;',
       'background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);font-family:inherit}',
       '.dse_tab[data-on="1"]{background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font-weight:600}',
-      '.dse_list{flex:1;overflow-y:auto;padding:8px;scrollbar-width:thin}',
-      '.dse_group{font-size:11px;line-height:18px;padding:6px 10px 2px;color:var(--dsw-alias-label-tertiary);',
-      'letter-spacing:.03em;text-transform:uppercase}',
-      '.dse_item{display:flex;flex-direction:column;gap:2px;padding:7px 10px;border-radius:8px;cursor:pointer;',
-      'border:0;background:transparent;text-align:left;width:100%;font-family:inherit}',
-      '.dse_item[data-active="1"]{background:var(--dsw-alias-bg-layer-3)}',
-      '.dse_itemTitle{font-size:13px;line-height:19px;color:var(--dsw-alias-label-primary);display:flex;gap:6px;align-items:baseline}',
+      '.dse_list{flex:1;overflow-y:auto;padding:4px 6px 8px;scrollbar-width:thin}',
+      '.dse_sect{padding:2px 0}',
+      '.dse_sect+.dse_sect{border-top:.5px solid var(--dsw-alias-border-l3);margin-top:2px;padding-top:4px}',
+      '.dse_sectHead{display:flex;align-items:baseline;gap:8px;padding:8px 10px 3px}',
+      '.dse_sectTitle{font-size:11px;line-height:16px;font-weight:600;letter-spacing:.02em;',
+      'color:var(--dsw-alias-label-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dse_sectCount{flex:none;margin-left:auto;font-size:10.5px;line-height:15px;padding:0 6px;border-radius:999px;',
+      'color:var(--dsw-alias-label-tertiary);background:var(--dsw-alias-bg-layer-1)}',
+      '.dse_item{display:flex;flex-direction:column;gap:3px;padding:7px 10px;border-radius:8px;cursor:pointer;',
+      'border:0;background:transparent;text-align:left;width:100%;font-family:inherit;',
+      'box-shadow:inset 0 -.5px 0 var(--dsw-alias-border-l3)}',
+      '.dse_sect>.dse_item:last-child{box-shadow:none}',
+      '.dse_item:hover{background:var(--dsw-alias-bg-layer-2)}',
+      '.dse_item[data-active="1"]{background:var(--dsw-alias-bg-layer-3);',
+      'box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l2),inset 2.5px 0 0 var(--dsw-alias-state-warn-primary)}',
+      '.dse_sect>.dse_item[data-active="1"]+.dse_item,.dse_item[data-active="1"]{box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l2),inset 2.5px 0 0 var(--dsw-alias-state-warn-primary)}',
       '.dse_badge{flex:none;font-size:10px;line-height:15px;padding:0 5px;border-radius:4px;font-weight:600;',
-      'background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-tertiary)}',
-      '.dse_badge[data-role="user"]{color:var(--dsw-alias-label-secondary)}',
-      '.dse_badgeTitle{color:var(--dsw-alias-label-tertiary)}',
-      '.dse_titleText{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      'background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-tertiary);',
+      'box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l3)}',
+      '.dse_badge[data-role="user"]{color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2)}',
       '.dse_snip[data-role="user"]{color:var(--dsw-alias-label-primary)}',
-      '.dse_line{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);display:flex;gap:8px;',
-      'align-items:baseline;overflow:hidden}',
-      '.dse_linePath{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.7}',
+      '.dse_line{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);display:flex;gap:7px;',
+      'align-items:center;overflow:hidden;min-width:0}',
+      '.dse_lineTime{flex:none;font-variant-numeric:tabular-nums}',
+      '.dse_linePath{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.7;direction:rtl;',
+      'text-align:left;unicode-bidi:plaintext}',
       '.dse_snip{font-size:12.5px;line-height:19px;color:var(--dsw-alias-label-secondary);',
       'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}',
+      '.dse_line .dse_badge{align-self:center}',
       '.dse_mark{background:transparent;color:var(--dsw-alias-state-warn-primary);font-weight:700}',
       '.dse_meta{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);overflow:hidden;',
       'text-overflow:ellipsis;white-space:nowrap}',
@@ -616,40 +627,53 @@ window.__ModuleLoader__.load({
           foot.textContent = ''
           return
         }
-        let lastSid = ''
+        // 同一会话的命中归入一个区块：区块之间有分隔线，区块头显示会话标题与命中数。
+        const groups = new Map()
         hits.forEach((hit, index) => {
-          if (hit.sid !== lastSid) {
-            lastSid = hit.sid
-            list.appendChild(el('div', 'dse_group', hit.title || hit.sid.slice(0, 12)))
+          let bucket = groups.get(hit.sid)
+          if (bucket === undefined) {
+            bucket = { title: hit.title || hit.sid.slice(0, 12), hits: [] }
+            groups.set(hit.sid, bucket)
           }
-          const item = el('button', 'dse_item')
+          bucket.hits.push({ hit, index })
+        })
+        let flat = 0
+        groups.forEach((bucket) => {
+          const section = el('div', 'dse_sect')
+          const head = el('div', 'dse_sectHead')
+          head.append(
+            el('span', 'dse_sectTitle', bucket.title),
+            el('span', 'dse_sectCount', String(bucket.hits.length)),
+          )
+          section.appendChild(head)
+          for (const entry of bucket.hits) {
+            const hit = entry.hit
+            const index = entry.index
+            flat += 1
+            const item = el('button', 'dse_item')
           item.dataset.active = index === 0 ? '1' : '0'
           item.dataset.index = String(index)
-          // 标题行只放归属信息：会话结果=会话标题；消息结果=所在会话标题 + 那行摘要。
-          const title = el('div', 'dse_itemTitle')
-          if (hit.role === 'title') {
-            title.appendChild(el('span', 'dse_badge dse_badgeTitle', '会话'))
-            title.appendChild(el('span', 'dse_titleText', hit.snippet))
-          } else {
-            title.appendChild(el('span', 'dse_badge', hit.role === 'user' ? '我' : '助手'))
-            title.appendChild(el('span', 'dse_titleText', hit.title || hit.sid))
-          }
+          // 主文是命中片段；下面一行只放归属信息（角色 + 时间 + 路径），避免与会话标题重复。
           const snip = markSnippet(hit.snippet, hit.offset, hit.length)
           if (hit.role === 'user') snip.dataset.role = 'user'
-          item.append(title, snip)
+          item.appendChild(snip)
           const line = document.createElement('div')
           line.className = 'dse_line'
-          const meta = hit.sessionHits > 1 ? '本会话共 ' + hit.sessionHits + ' 处命中' : formatTime(hit.time)
-          line.append(el('span', '', meta), el('span', 'dse_linePath', hit.cwd || ''))
+          const badge = el('span', 'dse_badge', hit.role === 'title' ? '会话' : hit.role === 'user' ? '我' : '助手')
+          if (hit.role === 'user') badge.dataset.role = 'user'
+          line.append(badge, el('span', 'dse_lineTime', formatTime(hit.time)))
+          if (hit.cwd) line.append(el('span', 'dse_linePath', hit.cwd))
           item.appendChild(line)
-          item.addEventListener('mouseenter', () => {
-            active = index
-            list.querySelectorAll('.dse_item').forEach((node) => {
-              node.dataset.active = node.dataset.index === String(index) ? '1' : '0'
+            item.addEventListener('mouseenter', () => {
+              active = index
+              list.querySelectorAll('.dse_item').forEach((node) => {
+                node.dataset.active = node.dataset.index === String(index) ? '1' : '0'
+              })
             })
-          })
-          item.addEventListener('click', () => void activate(hit))
-          list.appendChild(item)
+            item.addEventListener('click', () => void activate(hit))
+            section.appendChild(item)
+          }
+          list.appendChild(section)
         })
       }
 

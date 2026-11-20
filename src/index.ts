@@ -35,6 +35,11 @@ export interface Config {
   maxResults?: number
   /** 会话根目录；默认 $DSH_HOME/sessions 或 ~/.dsh/sessions。 */
   sessionsRoot?: string
+  /**
+   * 磁盘索引目录；默认 $DSH_HOME/storages/dsh-search-everything。
+   * 设成空串则关闭持久化（每次启动全量重扫），排查缓存问题时用。
+   */
+  cacheDir?: string
 }
 
 interface WebRequest {
@@ -77,10 +82,18 @@ function writeJson(res: WebResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body))
 }
 
-function defaultSessionsRoot(): string {
+function dshHome(): string {
   const home = process.env.DSH_HOME
-  if (home !== undefined && home !== '') return path.join(home, 'sessions')
-  return path.join(os.homedir(), '.dsh', 'sessions')
+  if (home !== undefined && home !== '') return home
+  return path.join(os.homedir(), '.dsh')
+}
+
+function defaultSessionsRoot(): string {
+  return path.join(dshHome(), 'sessions')
+}
+
+function defaultCacheDir(): string {
+  return path.join(dshHome(), 'storages', 'dsh-search-everything')
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -89,12 +102,13 @@ function clamp(value: number, min: number, max: number): number {
 
 export function apply(ctx: Context, config: Config = {}): void {
   const root = config.sessionsRoot ?? defaultSessionsRoot()
-  const engine = new SearchEngine(root)
+  const cacheDir = config.cacheDir ?? defaultCacheDir()
+  const engine = new SearchEngine(root, cacheDir)
   const maxResults = clamp(config.maxResults ?? 50, 1, 200)
   const refreshIntervalMs = clamp(config.refreshIntervalMs ?? 0, 0, 600000)
   const lazyRefreshMs = clamp(config.lazyRefreshMs ?? 0, 0, 600000)
 
-  // 首屏不等：先让插件激活成功，建库在后台自己跑完。
+  // 首屏不等：先让插件激活成功，索引在后台自己跑完（有磁盘索引时是「恢复 + 增量校验」）。
   void engine.reindex().catch(() => {})
 
   let timer: any
@@ -181,80 +195,14 @@ export function apply(ctx: Context, config: Config = {}): void {
           writeJson(out, 200, { ok: true, ...doc })
           return
         }
-        if (sub === 'stats') {
-          writeJson(out, 200, { ok: true, stats: engine.stats() })
+        if (sub === 'flush') {
+          // 卸载/退出前把内存索引落盘。平时靠 1.2s 防抖自动写，这条只是兜底。
+          const wrote = engine.flush()
+          writeJson(out, 200, { ok: true, wrote, stats: engine.stats() })
           return
         }
-        if (sub === 'debug') {
-          const sc = (ctx as any).get?.('sessions')
-          const list = (sc?.list?.() ?? []).map((s: any) => ({ id: s.id, cwd: s.header?.cwd }))
-          const fs2 = (ctx as any).get?.('sessionQuery')
-          let disk: unknown = null
-          let qerr = ''
-          try {
-            const rec = await fs2?.listSessions?.(undefined)
-            disk = (rec ?? []).map((x: any) => ({ id: x.header?.id, cwd: x.header?.cwd, st: x.formatStatus }))
-          } catch (e) {
-            qerr = String(e)
-          }
-          const node_fs = await import('node:fs')
-          const dirs = node_fs.readdirSync(root)
-          const detail: any = {}
-          for (const d of dirs) {
-            const sub = node_fs.readdirSync(path.join(root, d))
-            detail[d] = sub.map((s) => ({ s, files: node_fs.readdirSync(path.join(root, d, s)) }))
-          }
-          const cat = await import('@deepseek-ai/dsh-session-format-catalog')
-          const dec: any = {}
-          for (const d of dirs) for (const s of node_fs.readdirSync(path.join(root, d))) {
-            const f2 = path.join(root, d, s, 'session.v4.jsonl.zstd')
-            try {
-              const z = (await import('node:zlib')).default
-              const txt = z.zstdDecompressSync(node_fs.readFileSync(f2)).toString('utf8')
-              const first = txt.split('\n')[0]
-              dec[s] = cat.sessionFormatCatalog.readHeader(JSON.parse(first)).status
-            } catch (e) {
-              dec[s] = 'ERR ' + String(e).slice(0, 120)
-            }
-          }
-          const oneId = Object.keys(dec)[0] ?? ''
-          let docErr = ''
-          let docRes: any = null
-          try {
-            docRes = await fs2.readSession(oneId)
-            docRes = { header: docRes.header, events: (docRes.events ?? []).length }
-          } catch (e) {
-            docErr = String(e).slice(0, 300)
-          }
-          let rawErr = ''
-          let rawOk: any = null
-          const fsSvc: any = (ctx as any).get?.('sessionPersistence') ?? (ctx as any).get?.('sessions')
-          let svcNames: string[] = []
-          try {
-            svcNames = ['sessionPersistence', 'persistence', 'sessions'].filter((n) => (ctx as any).get?.(n) !== undefined)
-          } catch {}
-          try {
-            const pers: any = (ctx as any).get?.('sessionPersistence')
-            const lst = await pers?.list?.({})
-            rawOk = (lst ?? []).length
-          } catch (e) {
-            rawErr = String(e).slice(0, 200)
-          }
-          const pers: any = (ctx as any).get?.('sessionPersistence')
-          const info: any = { root: pers?.root, compression: pers?.compression }
-          try { info.projects = await pers.listProjectDirs() } catch (e) { info.projectsErr = String(e).slice(0, 200) }
-          try { info.genCount = (await pers.listGenerations()).length } catch (e) { info.genErr = String(e).slice(0, 200) }
-          try { info.artCount = (await pers.listArtifacts()).length } catch (e) { info.artErr = String(e).slice(0, 300) }
-          const pers2: any = (ctx as any).get?.('sessionPersistence')
-          let logsErr = ''
-          let logsOk: any = null
-          try {
-            const lg = await pers2.requireStoredLog(oneId)
-            logsOk = { headerId: lg.header?.id, events: (lg.events ?? []).length, inherited: lg.inheritedEventCount }
-          } catch (e) {
-            logsErr = String(e).slice(0, 400)
-          }
-          writeJson(out, 200, { ok: true, live: list, root, hasQuery: fs2 !== undefined, disk, qerr, oneId, docRes, docErr, svcNames, rawOk, rawErr, info, logsOk, logsErr })
+        if (sub === 'stats') {
+          writeJson(out, 200, { ok: true, stats: engine.stats() })
           return
         }
         writeJson(out, 404, { error: 'not found' })
@@ -264,6 +212,8 @@ export function apply(ctx: Context, config: Config = {}): void {
       return () => {
         for (const off of dispose) off()
         disposeTimer()
+        // 插件被禁用或宿主退出：把最后一次增量写进磁盘索引，下次启动直接恢复。
+        engine.flush()
       }
     })
   }

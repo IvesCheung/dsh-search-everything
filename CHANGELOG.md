@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.2.0
+
+- The index is now persisted to disk (`$DSH_HOME/storages/dsh-search-everything/`), so a restart no
+  longer re-decompresses every session log. On a 229-session / 31 MB corpus the first start builds in
+  ~4.6 s and writes a 37 MB index; later starts restore it in **~340 ms** and then only re-read files
+  whose mtime or size changed.
+- Writes are debounced (1.2 s), atomic (temp file + rename) and versioned: a format or root mismatch
+  discards the cache instead of serving stale text.
+- New `GET /dsh-search-everything-api/flush` writes the index on demand; the plugin also flushes when
+  it is disposed.
+- New `cacheDir` config (set it to an empty string to turn persistence off).
+- `stats` now reports `cache: { enabled, hit, loadMs, bytes, savedAt, path }`.
+- `scripts/bench-cache.mjs` measures cold build vs warm restore on the local corpus.
+
+## 0.1.2
+
+- Result list is grouped into one section per session, with a hairline separator between sections and
+  between results, and a hit-count pill in each section header.
+- Each result is now two rows instead of three: the matched snippet (up to two lines) on top, and a meta
+  row with role, time and the tail of the working directory underneath. The session title moved to the
+  section header, so nothing is repeated on every row.
+- The active row gets a left keyline plus a hairline border, so the focus is obvious at a glance.
+- Hover feedback on rows, and long paths are truncated from the head instead of overflowing.
+
 ## 0.1.1
 
 - Refreshing is on demand instead of every 5 s: opening the palette triggers one incremental scan

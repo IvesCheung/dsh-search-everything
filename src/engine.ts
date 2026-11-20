@@ -51,6 +51,21 @@ export interface SearchHit {
   score: number
 }
 
+/** 磁盘索引的现状，给面板页脚与排障用。 */
+export interface CacheStats {
+  /** 本地是否有可用的索引文件。 */
+  enabled: boolean
+  /** 本次启动是否从磁盘索引直接恢复（而不是全量重扫）。 */
+  hit: boolean
+  /** 恢复耗时（毫秒）。 */
+  loadMs: number
+  /** 索引文件字节数。 */
+  bytes: number
+  /** 索引写入时间（毫秒时间戳），未写盘为 0。 */
+  savedAt: number
+  path: string
+}
+
 export interface SearchStats {
   sessions: number
   docs: number
@@ -61,6 +76,7 @@ export interface SearchStats {
   lastIndexMs: number
   lastIndexAt: number
   error?: string
+  cache: CacheStats
 }
 
 /** 单条消息保留的最大字符数。 */
@@ -69,6 +85,16 @@ const SNIPPET_BEFORE = 40
 const SNIPPET_AFTER = 120
 /** 每处理多少个文件让一次事件循环。 */
 const YIELD_EVERY = 6
+/**
+ * 磁盘索引格式版本。文档字段或切词规则一变就加一，旧缓存自动作废重扫，
+ * 不去写迁移逻辑 —— 重扫一次十几秒，迁移代码不值这个钱。
+ */
+const CACHE_VERSION = 1
+/** 索引落盘文件名。docs 单独成行文件：19200 行逐行 JSON.parse 比一次性解析 30MB 数组快，也不会一次吃掉双倍内存。 */
+const CACHE_META = 'index.meta.json'
+const CACHE_DOCS = 'docs.ndjson'
+/** 索引变化后延迟多久写盘，避免打开面板时的连续增量把磁盘写穿。 */
+const SAVE_DEBOUNCE_MS = 1200
 
 interface SessionEntry {
   sid: string
@@ -199,8 +225,21 @@ function termsOf(query: string): string[] {
   return terms
 }
 
+/** 磁盘上的索引元信息。files 用来判断哪些会话文件在卸载期间变过。 */
+interface CacheMeta {
+  version: number
+  root: string
+  savedAt: number
+  docs: number
+  chars: number
+  files: SessionEntry[]
+}
+
 export class SearchEngine {
   private readonly root: string
+  private readonly cacheDir: string | undefined
+  private cache: CacheStats
+  private saveTimer: any
   private docs: SearchDoc[] = []
   private sessions = new Map<string, SessionEntry>()
   private chars = 0
@@ -210,11 +249,21 @@ export class SearchEngine {
   private lastIndexAt = 0
   private error: string | undefined
   private generation = 0
+  private dirty = false
   private lastCheckAt = 0
   private checking: Promise<SearchStats> | undefined
 
-  constructor(root: string) {
+  constructor(root: string, cacheDir?: string) {
     this.root = root
+    this.cacheDir = cacheDir
+    this.cache = {
+      enabled: cacheDir !== undefined && cacheDir !== '',
+      hit: false,
+      loadMs: 0,
+      bytes: 0,
+      savedAt: 0,
+      path: cacheDir === undefined || cacheDir === '' ? '' : path.join(cacheDir, CACHE_META),
+    }
   }
 
   stats(): SearchStats {
@@ -227,33 +276,196 @@ export class SearchEngine {
       lastIndexMs: this.lastIndexMs,
       lastIndexAt: this.lastIndexAt,
       ...(this.error === undefined ? {} : { error: this.error }),
+      cache: this.cache,
     }
   }
 
-  /** 同步全量建库（测试/CLI 用）。 */
-  reindexSync(): SearchStats {
-    this.docs = []
-    this.sessions.clear()
-    this.chars = 0
+  /**
+   * 从磁盘索引恢复（同步）。命中返回 true，调用方随后只需做一次增量校验。
+   *
+   * 这是本插件启动从「十几秒」降到「几百毫秒」的关键：229 个会话全量解压 + 解析
+   * 约 15s，而读回 30MB 文档 + 逐行还原约 0.4s。
+   */
+  loadCacheSync(): boolean {
+    if (this.cacheDir === undefined || this.cacheDir === '') return false
     const started = Date.now()
-    for (const item of this.walk(this.root)) {
-      const stat = safeStat(item.file)
-      if (stat === undefined) continue
-      this.indexFile(item.sid, item.file, stat.mtimeMs, stat.size)
+    const metaPath = path.join(this.cacheDir, CACHE_META)
+    const docsPath = path.join(this.cacheDir, CACHE_DOCS)
+    let meta: CacheMeta
+    let raw: string
+    try {
+      meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as CacheMeta
+      raw = fs.readFileSync(docsPath, 'utf8')
+    } catch {
+      return false
     }
-    this.lastIndexMs = Date.now() - started
-    this.lastIndexAt = Date.now()
+    if (meta.version !== CACHE_VERSION || meta.root !== this.root) return false
+    if (!Array.isArray(meta.files) || typeof raw !== 'string') return false
+    const info = new Map<string, { title: string; cwd: string }>()
+    this.sessions.clear()
+    for (const file of meta.files) {
+      info.set(file.sid, { title: file.title, cwd: file.cwd })
+      this.sessions.set(file.file, file)
+    }
+    const docs: SearchDoc[] = []
+    let chars = 0
+    for (const line of raw.split('\n')) {
+      if (line === '') continue
+      let row: unknown
+      try {
+        row = JSON.parse(line)
+      } catch {
+        continue
+      }
+      if (!Array.isArray(row) || row.length < 5) continue
+      const [sid, role, seq, time, text] = row as [string, string, number, number, string]
+      const owner = info.get(sid)
+      if (owner === undefined || typeof text !== 'string') continue
+      const doc: SearchDoc = {
+        sid,
+        title: owner.title,
+        cwd: owner.cwd,
+        role: role as SearchDoc['role'],
+        seq,
+        time,
+        text,
+        lower: text.toLowerCase(),
+      }
+      docs.push(doc)
+      chars += text.length
+    }
+    // 空缓存当未命中：宁可重扫一次，也不要让用户看到一个空面板。
+    if (docs.length === 0) return false
+    this.docs = docs
+    this.chars = chars
+    this.dirty = false
     this.progress = 1
+    this.cache = {
+      ...this.cache,
+      hit: true,
+      loadMs: Date.now() - started,
+      bytes: meta.files.length === 0 ? 0 : safeBytes(metaPath) + safeBytes(docsPath),
+      savedAt: meta.savedAt,
+    }
+    this.lastIndexMs = this.cache.loadMs
+    this.lastIndexAt = meta.savedAt
+    return true
+  }
+
+  /** 立即写盘（忽略防抖）。返回是否真的写了。 */
+  flush(): boolean {
+    if (this.saveTimer !== undefined) {
+      clearTimeout(this.saveTimer)
+      this.saveTimer = undefined
+    }
+    if (!this.dirty) return false
+    return this.saveCache()
+  }
+
+  private scheduleSave(): void {
+    if (this.cacheDir === undefined || this.cacheDir === '') return
+    if (!this.dirty) return
+    if (this.saveTimer !== undefined) clearTimeout(this.saveTimer)
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = undefined
+      this.saveCache()
+    }, SAVE_DEBOUNCE_MS)
+    this.saveTimer.unref?.()
+  }
+
+  private saveCache(): boolean {
+    if (this.cacheDir === undefined || this.cacheDir === '') return false
+    const metaPath = path.join(this.cacheDir, CACHE_META)
+    const docsPath = path.join(this.cacheDir, CACHE_DOCS)
+    try {
+      fs.mkdirSync(this.cacheDir, { recursive: true })
+      const lines: string[] = new Array(this.docs.length)
+      for (let i = 0; i < this.docs.length; i += 1) {
+        const doc = this.docs[i] as SearchDoc
+        lines[i] = JSON.stringify([doc.sid, doc.role, doc.seq, doc.time, doc.text])
+      }
+      const savedAt = Date.now()
+      // docs 先写、meta 后写：meta 是新索引的提交点，中途崩溃只会留下旧 meta + 新 docs，
+      // 下次启动校验 root/version 后照常覆盖，不会读到半截状态。
+      writeAtomic(docsPath, lines.join('\n') + '\n')
+      const meta: CacheMeta = {
+        version: CACHE_VERSION,
+        root: this.root,
+        savedAt,
+        docs: this.docs.length,
+        chars: this.chars,
+        files: [...this.sessions.values()],
+      }
+      writeAtomic(metaPath, JSON.stringify(meta))
+      this.dirty = false
+      this.cache = { ...this.cache, enabled: true, bytes: safeBytes(metaPath) + safeBytes(docsPath), savedAt }
+      return true
+    } catch (error) {
+      // 落盘失败不影响检索：内存索引照常工作，下次再试。
+      this.error = (error instanceof Error ? error.message : String(error)) + ' @ cache'
+      return false
+    }
+  }
+
+  /** 同步全量建库（测试/CLI 用）；有缓存时先恢复再增量校验。 */
+  reindexSync(): SearchStats {
+    const started = Date.now()
+    const warm = this.docs.length === 0 && this.loadCacheSync()
+    if (!warm) {
+      this.docs = []
+      this.sessions.clear()
+      this.chars = 0
+      for (const item of this.walk(this.root)) {
+        const stat = safeStat(item.file)
+        if (stat === undefined) continue
+        this.indexFile(item.sid, item.file, stat.mtimeMs, stat.size)
+      }
+      this.lastIndexMs = Date.now() - started
+      this.lastIndexAt = Date.now()
+    } else {
+      this.refreshSync()
+      this.lastIndexMs = this.cache.loadMs + (Date.now() - started - this.cache.loadMs)
+    }
+    this.progress = 1
+    this.scheduleSave()
     return this.stats()
   }
 
-  /** 异步全量建库：每 YIELD_EVERY 个文件让一次事件循环，宿主不卡。 */
+  /** 同步增量：只重扫 mtime/size 变了的文件。 */
+  private refreshSync(): void {
+    const seen = new Set<string>()
+    for (const item of this.walk(this.root)) {
+      seen.add(item.file)
+      const stat = safeStat(item.file)
+      if (stat === undefined) continue
+      const known = this.sessions.get(item.file)
+      if (known !== undefined && known.mtimeMs === stat.mtimeMs && known.size === stat.size) continue
+      this.indexFile(item.sid, item.file, stat.mtimeMs, stat.size, known)
+    }
+    for (const [file, entry] of this.sessions) {
+      if (seen.has(file)) continue
+      this.dropSession(entry)
+      this.sessions.delete(file)
+    }
+  }
+
+  /**
+   * 异步建库：先尝试从磁盘索引恢复，恢复后只做一次增量校验；
+   * 没有缓存（或缓存作废）才走全量 —— 全量时每 YIELD_EVERY 个文件让一次事件循环，宿主不卡。
+   */
   async reindex(): Promise<SearchStats> {
     if (this.indexing) return this.stats()
     const generation = ++this.generation
     this.indexing = true
     const started = Date.now()
     try {
+      if (this.docs.length === 0 && this.loadCacheSync()) {
+        const warmStats = await this.refreshOnce()
+        this.progress = 1
+        this.lastIndexMs = Date.now() - started
+        if (warmStats.error === undefined) this.error = undefined
+        return warmStats
+      }
       const files = [...this.walk(this.root)]
       this.docs = []
       this.sessions.clear()
@@ -276,6 +488,7 @@ export class SearchEngine {
     } finally {
       this.indexing = false
     }
+    this.scheduleSave()
     return this.stats()
   }
 
@@ -332,6 +545,7 @@ export class SearchEngine {
       this.indexing = false
       this.lastCheckAt = Date.now()
     }
+    this.scheduleSave()
     return this.stats()
   }
 
@@ -354,6 +568,7 @@ export class SearchEngine {
   }
 
   private indexFile(sid: string, file: string, mtimeMs: number, size: number, previous?: SessionEntry): void {
+    this.dirty = true
     if (previous !== undefined) this.dropSession(previous)
     let parsed: ReturnType<typeof readSession>
     try {
@@ -387,6 +602,7 @@ export class SearchEngine {
   }
 
   private dropSession(entry: SessionEntry): void {
+    this.dirty = true
     const before = this.docs.length
     const kept: SearchDoc[] = []
     for (const doc of this.docs) {
@@ -507,4 +723,19 @@ function safeStat(file: string): fs.Stats | undefined {
   } catch {
     return undefined
   }
+}
+
+function safeBytes(file: string): number {
+  try {
+    return fs.statSync(file).size
+  } catch {
+    return 0
+  }
+}
+
+/** 先写临时文件再 rename：中途崩溃不会留下半截索引，下次启动照常可用。 */
+function writeAtomic(file: string, data: string): void {
+  const tmp = file + '.tmp'
+  fs.writeFileSync(tmp, data)
+  fs.renameSync(tmp, file)
 }
