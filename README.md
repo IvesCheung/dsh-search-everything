@@ -5,12 +5,18 @@ across **every session of every workspace** — session titles, your own message
 then hit Enter to jump straight to that message inside the conversation and highlight it.
 
 - One search box, four tabs: All / Sessions / My messages / Assistant replies
+- Optional scope: limit the search to one workspace (the pill on the tab row), down to 4 ms on a 31 MB corpus
 - Index lives in the host process and is persisted to disk: a restart restores it in ~0.3 s instead of
   re-parsing every log, and a query over ~30 MB / 18k messages takes 10–90 ms
 - Clicking a result switches workspace, switches session, scrolls to the message and flashes it
 - Local only: reads `~/.dsh/sessions`, no upload, no network, no telemetry
 
 ![palette](screenshots/palette.png)
+
+The scope pill limits the search to one workspace — here the palette is already scoped to `atlas-api`,
+and `Ctrl W` opens the row with every workspace and its message count:
+
+![scope](screenshots/scope.png)
 
 Jumping to a hit — the target message is scrolled into view and outlined:
 
@@ -44,6 +50,8 @@ After the restart:
 | Move selection | `↑` `↓` (or `Ctrl P` / `Ctrl N`) |
 | Open selected result | `Enter` |
 | Switch tab | `Tab` / `Shift Tab`, or `→` `←` when the input is empty |
+| Toggle the workspace scope row | `Ctrl W` |
+| Pick a workspace while the scope row is open | `→` `←`, or click |
 | Close | `Esc` |
 
 Query syntax:
@@ -79,7 +87,7 @@ Host half (src/engine.ts)  — in-memory index: { sid, title, cwd, role, seq, ti
         │  restored from $DSH_HOME/storages/dsh-search-everything when present, full build otherwise;
         │  afterwards rescanned on demand — no background polling
         ▼
-GET /dsh-search-everything-api/{refresh,query,sessions,doc,stats,flush}   (loopback only)
+GET /dsh-search-everything-api/{refresh,query,sessions,workspaces,doc,stats,flush}   (loopback only)
         ▼
 Browser half (client.js)  — Ctrl K palette, list rendering, keyboard handling, jump & highlight
 ```
@@ -104,6 +112,11 @@ rendering), then:
    virtualized list backwards screen by screen (it anchors to the bottom, so a plain
    `scrollIntoView` gets snapped back), and finally `scrollIntoView({block:'center'})` plus a
    2.6 s highlight.
+
+**Scoping narrows the scan, it does not filter afterwards.** Documents are grouped by their session's
+working directory once and cached, and a scoped query reads only that group — on the 31 MB corpus
+`search` goes from 32 ms to 4 ms and `Everything` from 22 ms to 2 ms. The palette opens on the workspace
+the current conversation belongs to; `Ctrl W` (or the pill) switches to another one or back to all.
 
 **The index survives restarts.** Building it means inflating and parsing every session log — about
 4.6 s for 229 sessions / 31 MB, and far worse on a cold page cache. So the documents are written to
@@ -140,7 +153,7 @@ In the `config` block of `cordis.patch.yml`:
 
 ```bash
 npm run build     # src/*.ts -> lib/*.js (Node built-in stripTypeScriptTypes, no third-party deps)
-npm test          # node --test test/ (11 cases over synthetic corpora: indexing/filtering/refresh/cache/corrupt files)
+npm test          # node --test test/ (13 cases: indexing/filtering/refresh/cache/scope/corrupt files)
 npm run bench     # index build and query timings on the real corpus
 node scripts/bench-cache.mjs   # cold build vs warm restore on the real corpus
 ```

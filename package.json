@@ -1,6 +1,6 @@
 {
   "name": "dsh-search-everything",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Everything-style global search for DSH: Ctrl+K over every session message, jump straight to the hit.",
   "type": "module",
   "license": "MIT",
@@ -40,7 +40,9 @@
     "prepublishOnly": "node scripts/build.mjs",
     "build": "node scripts/build.mjs",
     "test": "node --test test/",
-    "bench": "node scripts/bench.mjs"
+    "bench": "node scripts/bench.mjs",
+    "bench:scope": "node scripts/bench-scope.mjs",
+    "bench:cache": "node scripts/bench-cache.mjs"
   },
   "engines": {
     "node": ">=22.15"

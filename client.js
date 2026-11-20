@@ -33,7 +33,23 @@ window.__ModuleLoader__.load({
       '.dse_input::placeholder{color:var(--dsw-alias-label-tertiary)}',
       '.dse_kbd{flex:none;font-size:11px;line-height:16px;padding:1px 6px;border-radius:5px;color:var(--dsw-alias-label-tertiary);',
       'background:var(--dsw-alias-bg-layer-1);box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l2)}',
-      '.dse_tabs{display:flex;gap:6px;padding:8px 12px 0;flex-wrap:wrap}',
+      '.dse_tabs{display:flex;gap:6px;padding:8px 12px 0;flex-wrap:wrap;align-items:center}',
+      '.dse_scope{flex:none;margin-left:auto;max-width:190px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;',
+      'text-align:left;font-size:11px;line-height:19px;padding:2px 9px;border-radius:999px;cursor:pointer;border:0;font-family:inherit;',
+      'color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);',
+      'box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l2)}',
+      '.dse_scope:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-2)}',
+      '.dse_scope[data-on="1"]{color:var(--dsw-alias-state-warn-primary);background:var(--dsw-alias-bg-layer-2);',
+      'box-shadow:inset 0 0 0 .5px var(--dsw-alias-state-warn-primary)}',
+      '.dse_chips{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px;border-bottom:.5px solid var(--dsw-alias-border-l3);',
+      'max-height:150px;overflow-y:auto;scrollbar-width:thin}',
+      '.dse_chip{font-size:11.5px;line-height:19px;padding:2px 9px;border-radius:999px;cursor:pointer;border:0;font-family:inherit;',
+      'color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);',
+      'box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l2)}',
+      '.dse_chip:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}',
+      '.dse_chip[data-on="1"]{color:var(--dsw-alias-state-warn-primary);box-shadow:inset 0 0 0 .5px var(--dsw-alias-state-warn-primary)}',
+      '.dse_chip[data-current="1"]{border:0;box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l2)}',
+      '.dse_chipN{opacity:.6;margin-left:5px;font-variant-numeric:tabular-nums}',
       '.dse_tab{font-size:12px;line-height:20px;padding:2px 10px;border-radius:999px;cursor:pointer;border:0;',
       'background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);font-family:inherit}',
       '.dse_tab[data-on="1"]{background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font-weight:600}',
@@ -166,6 +182,44 @@ window.__ModuleLoader__.load({
       const words = fallback.split(/\s+/).filter((w) => w.length >= 2).slice(0, 3).join(' ')
       if (!out.includes(words)) out.push(words)
       return out.filter((item) => loose(item).length >= 3)
+    }
+
+    /**
+     * 当前工作区（宿主侧视角）。
+     *
+     * 两处来源：会话容器的 data-conversation-session 指向某个会话时，从工作区快照里
+     * 反查它的 path；否则退回已选中工作区的 path。都拿不到就只有「所有工作区」。
+     */
+    function currentScope(ctx) {
+      const workspaces = serviceOf(ctx, 'workspaces')
+      if (workspaces === undefined) return ''
+      try {
+        const snapshot = workspaces.list.getSnapshot()
+        const items = Array.isArray(snapshot?.items) ? snapshot.items : []
+        const node = document.querySelector('[data-conversation-session]')
+        const sid = node === null ? '' : node.getAttribute('data-conversation-session') || ''
+        if (sid !== '') {
+          for (const item of items) {
+            if (Array.isArray(item.sessionIds) && item.sessionIds.includes(sid)) return item.path || ''
+          }
+        }
+        for (const item of items) {
+          const active = item.workspaceId === snapshot?.state?.workspaceId || item.workspaceId === snapshot?.state?.activeWorkspaceId
+          if (active && item.path) return item.path
+        }
+      } catch {}
+      return ''
+    }
+
+    /** 工作区键：反斜杠压成斜杠、去掉尾斜杠、小写。与会话日志里的 cwd 归一方式一致。 */
+    function scopeKey(value) {
+      return String(value || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+    }
+
+    function scopeLabel(scope) {
+      if (!scope) return '所有工作区'
+      const parts = String(scope).replace(/\\/g, '/').replace(/\/+$/, '').split('/')
+      return parts[parts.length - 1] || scope
     }
 
     function toast(text) {
@@ -482,8 +536,14 @@ window.__ModuleLoader__.load({
       let series = 0
       let debounce = null
       let lastQuery = ''
+      /** 空串 = 所有工作区。收窄后查询只扫那个工作区的文档，不发全库再过滤。 */
+      let scope = ''
+      let chipsRow = null
+      let scopeBtn = null
+      let chipNodes = []
 
       function build() {
+        scope = currentScope(ctx)
         backdrop = el('div', 'dse_backdrop')
         const panel = el('div', 'dse_panel')
         const head = el('div', 'dse_head')
@@ -509,11 +569,27 @@ window.__ModuleLoader__.load({
           })
           tabs.appendChild(btn)
         }
+        scopeBtn = el('button', 'dse_scope')
+        scopeBtn.type = 'button'
+        scopeBtn.title = '限定搜索范围（Ctrl+W 切换）'
+        scopeBtn.textContent = '所有工作区'
+        scopeBtn.dataset.on = '0'
+        syncScopeBtn()
+        scopeBtn.addEventListener('click', () => {
+          chipsRow.hidden = !chipsRow.hidden
+          if (!chipsRow.hidden) void loadWorkspaces()
+        })
+        const sep = el('span', 'dse_kbd', '范围')
+        tabs.append(sep, scopeBtn)
+
+        chipsRow = el('div', 'dse_chips')
+        chipsRow.hidden = true
+        chipsRow.addEventListener('keydown', onKey)
 
         list = el('div', 'dse_list')
         foot = el('div', 'dse_foot', '正在读取索引…')
 
-        panel.append(head, tabs, list, foot)
+        panel.append(head, tabs, chipsRow, list, foot)
         backdrop.appendChild(panel)
         backdrop.addEventListener('mousedown', (event) => {
           if (event.target === backdrop) closeAll()
@@ -527,6 +603,56 @@ window.__ModuleLoader__.load({
         input.focus()
         void showRecent()
         void warmup()
+      }
+
+      function syncScopeBtn() {
+        if (scopeBtn === null) return
+        scopeBtn.textContent = scopeLabel(scope)
+        scopeBtn.dataset.on = scope === '' ? '0' : '1'
+        scopeBtn.title = scope === '' ? '限定搜索范围（Ctrl+W 切换）' : '只在这个工作区里搜：' + scope + '（Ctrl+W 切换）'
+      }
+
+      /** 应用一个范围并立刻重跑当前查询（打开面板时还会预置成当前工作区）。 */
+      function setScope(next) {
+        scope = String(next || '')
+        syncScopeBtn()
+        for (const node of chipNodes) node.dataset.on = scopeKey(node.dataset.cwd || '') === scopeKey(scope) ? '1' : '0'
+        if (lastQuery === '') void showRecent()
+        else void run(lastQuery)
+      }
+
+      /** 工作区列表：次数 + 消息数一眼可见，用户按「哪个仓」挑，不用记路径。 */
+      async function loadWorkspaces() {
+        let data
+        try {
+          data = await api('/workspaces', {})
+        } catch {
+          return
+        }
+        const here = scopeKey(currentScope(ctx))
+        chipNodes = []
+        chipsRow.textContent = ''
+        const all = el('button', 'dse_chip', '所有工作区')
+        all.type = 'button'
+        all.dataset.cwd = ''
+        all.dataset.on = scope === '' ? '1' : '0'
+        all.addEventListener('click', () => setScope(''))
+        chipNodes.push(all)
+        chipsRow.appendChild(all)
+        for (const item of data.workspaces || []) {
+          if (!item.cwd) continue
+          const chip = el('button', 'dse_chip', item.title || scopeLabel(item.cwd))
+          chip.type = 'button'
+          chip.title = item.cwd + '（' + item.sessions + ' 个会话）'
+          chip.dataset.cwd = item.cwd
+          chip.dataset.on = scopeKey(item.cwd) === scopeKey(scope) ? '1' : '0'
+          if (scopeKey(item.cwd) === here) chip.dataset.current = '1'
+          const count = el('span', 'dse_chipN', String(item.docs))
+          chip.appendChild(count)
+          chip.addEventListener('click', () => setScope(item.cwd))
+          chipNodes.push(chip)
+          chipsRow.appendChild(chip)
+        }
       }
 
       /**
@@ -579,6 +705,20 @@ window.__ModuleLoader__.load({
           cycleTab(event.shiftKey ? -1 : 1)
           return
         }
+        // Ctrl+W 开合范围条；打开时 ←/→ 在范围之间切换（都被这里先吃掉，不进输入框）。
+        if (event.key === 'w' && event.ctrlKey) {
+          event.preventDefault()
+          if (chipsRow !== null) {
+            chipsRow.hidden = !chipsRow.hidden
+            if (!chipsRow.hidden) void loadWorkspaces()
+          }
+          return
+        }
+        if (chipsRow !== null && !chipsRow.hidden && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+          event.preventDefault()
+          moveChip(event.key === 'ArrowRight' ? 1 : -1)
+          return
+        }
         // 输入框里专注打字时，左右方向键留给光标；空查询时才用来切 tab。
         if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
           if (input.value !== '') return
@@ -590,6 +730,16 @@ window.__ModuleLoader__.load({
           event.preventDefault()
           void activate(rows[active])
         }
+      }
+
+      // 范围条上的左右移动：开合只是 visibility，焦点留在输入框，键盘不必换手。
+      function moveChip(step) {
+        if (chipNodes.length === 0) return
+        const at = chipNodes.findIndex((node) => node.dataset.on === '1')
+        const next = chipNodes[(((at < 0 ? 0 : at) + step) % chipNodes.length + chipNodes.length) % chipNodes.length]
+        if (next === undefined) return
+        setScope(next.dataset.cwd || '')
+        next.scrollIntoView({ block: 'nearest', inline: 'nearest' })
       }
 
       function move(delta) {
@@ -686,7 +836,7 @@ window.__ModuleLoader__.load({
         }
         const mine = ++series
         try {
-          const params = { q, limit: 60 }
+          const params = { q, limit: 60, scope }
           if (tab !== 'all') {
             if (tab === 'title') params.titleOnly = '1'
             else params.role = tab
@@ -697,7 +847,8 @@ window.__ModuleLoader__.load({
           renderList(hits, data.stats)
           const stats = data.stats || {}
           const cost = stats.indexing ? '建库中 ' + Math.round((stats.progress ?? 0) * 100) + '%' : '索引 ' + (stats.docs ?? 0) + ' 条消息 / ' + sizeLabel(stats.chars ?? 0)
-          foot.textContent = data.total + ' 处命中 · ' + data.tookMs + 'ms · ' + cost
+          const where = scope === '' ? '' : ' · 仅 ' + scopeLabel(scope)
+          foot.textContent = data.total + ' 处命中 · ' + data.tookMs + 'ms' + where + ' · ' + cost
         } catch (error) {
           if (mine !== series) return
           list.textContent = ''
@@ -713,7 +864,7 @@ window.__ModuleLoader__.load({
       async function showRecent() {
         const mine = ++series
         try {
-          const data = await api('/sessions', { limit: 20 })
+          const data = await api('/sessions', { limit: 20, scope })
           if (mine !== series) return
           const rowsRecent = (data.sessions || []).map((item) => ({
             sid: item.sid,
@@ -729,7 +880,8 @@ window.__ModuleLoader__.load({
           }))
           renderList(rowsRecent, data.stats)
           const stats = data.stats || {}
-          foot.textContent = stats.docs + ' 条消息 · ' + (stats.sessions ?? 0) + ' 个会话 · 输入即搜'
+          const where = scope === '' ? '' : ' · 仅 ' + scopeLabel(scope)
+          foot.textContent = stats.docs + ' 条消息 · ' + (stats.sessions ?? 0) + ' 个会话' + where + ' · 输入即搜'
         } catch {
           list.textContent = ''
           list.appendChild(el('div', 'dse_empty', '后端未就绪，稍后再试'))

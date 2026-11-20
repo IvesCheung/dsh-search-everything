@@ -225,6 +225,45 @@ function termsOf(query: string): string[] {
   return terms
 }
 
+/** 查询过滤条件。scope 把扫描范围缩到某个工作区（会话日志头部的 cwd）。 */
+export interface SearchOpts {
+  role?: string
+  sid?: string
+  titleOnly?: boolean
+  /** 只在这个工作区里搜；空串或未设 = 全库。 */
+  scope?: string
+}
+
+/** 索引聚合出的一个工作区。 */
+export interface WorkspaceInfo {
+  /** 会话日志里的原始 cwd，用作过滤与持久化键。 */
+  cwd: string
+  /** 展示用目录名（最后一段，如 dzwork）。 */
+  title: string
+  /** sessions/docs 是按工作区收窄后的规模，用来告诉用户「这个范围有多少条」。 */
+  sessions: number
+  docs: number
+  chars: number
+  lastTime: number
+}
+
+/**
+ * 工作区比较键。
+ *
+ * 同一个目录在不同会话里可能写成 C:/a/b 或 C:\a\b，Windows 又不区分大小写 ——
+ * 用户从下拉里点一个、从会话里另存一个，不归一就会被当成两个工作区。
+ */
+export function scopeKey(cwd: string): string {
+  const flat = cwd.replace(/\\/g, '/').replace(/\/+$/, '')
+  return process.platform === 'win32' ? flat.toLowerCase() : flat
+}
+
+function baseName(cwd: string): string {
+  const flat = cwd.replace(/\\/g, '/').replace(/\/+$/, '')
+  const parts = flat.split('/')
+  return parts[parts.length - 1] ?? flat
+}
+
 /** 磁盘上的索引元信息。files 用来判断哪些会话文件在卸载期间变过。 */
 interface CacheMeta {
   version: number
@@ -241,6 +280,14 @@ export class SearchEngine {
   private cache: CacheStats
   private saveTimer: any
   private docs: SearchDoc[] = []
+  /**
+   * 按工作区分组的文档视图（只在用到范围过滤时构建）。
+   *
+   * 收窄检索的真正收益来自这里：查一个 75 个会话 / 6000 条消息的仓库时，只扫这
+   * 6000 条，而不是全库 19200 条 —— 不是「先扫全部再丢」，是压根不碰别的文档。
+   * 文档一变（增量写入、会话被删、缓存恢复）就置空，下次按需重建。
+   */
+  private scoped: Map<string, SearchDoc[]> | undefined
   private sessions = new Map<string, SessionEntry>()
   private chars = 0
   private indexing = false
@@ -337,6 +384,7 @@ export class SearchEngine {
     // 空缓存当未命中：宁可重扫一次，也不要让用户看到一个空面板。
     if (docs.length === 0) return false
     this.docs = docs
+    this.scoped = undefined
     this.chars = chars
     this.dirty = false
     this.progress = 1
@@ -413,6 +461,7 @@ export class SearchEngine {
     const warm = this.docs.length === 0 && this.loadCacheSync()
     if (!warm) {
       this.docs = []
+      this.scoped = undefined
       this.sessions.clear()
       this.chars = 0
       for (const item of this.walk(this.root)) {
@@ -468,6 +517,7 @@ export class SearchEngine {
       }
       const files = [...this.walk(this.root)]
       this.docs = []
+      this.scoped = undefined
       this.sessions.clear()
       this.chars = 0
       let done = 0
@@ -569,6 +619,7 @@ export class SearchEngine {
 
   private indexFile(sid: string, file: string, mtimeMs: number, size: number, previous?: SessionEntry): void {
     this.dirty = true
+    this.scoped = undefined
     if (previous !== undefined) this.dropSession(previous)
     let parsed: ReturnType<typeof readSession>
     try {
@@ -603,6 +654,7 @@ export class SearchEngine {
 
   private dropSession(entry: SessionEntry): void {
     this.dirty = true
+    this.scoped = undefined
     const before = this.docs.length
     const kept: SearchDoc[] = []
     for (const doc of this.docs) {
@@ -619,7 +671,7 @@ export class SearchEngine {
    * 查询：线性扫描 + 多词 AND。
    * 30MB 语料实测 4–10ms；先按「最长的词」过滤（最挑食），再验其余词。
    */
-  search(query: string, limit: number, opts: { role?: string; sid?: string; titleOnly?: boolean } = {}): {
+  search(query: string, limit: number, opts: SearchOpts = {}): {
     hits: SearchHit[]
     total: number
     tookMs: number
@@ -630,7 +682,9 @@ export class SearchEngine {
     const ordered = [...terms].sort((a, b) => b.length - a.length)
     const perSession = new Map<string, number>()
     const matched: { doc: SearchDoc; at: number }[] = []
-    for (const doc of this.docs) {
+    const scope = opts.scope?.trim() ?? ''
+    const source = scope === '' ? this.docs : this.docsInScope(scope)
+    for (const doc of source) {
       if (opts.role !== undefined && opts.role !== '' && doc.role !== opts.role) continue
       if (opts.sid !== undefined && opts.sid !== '' && doc.sid !== opts.sid) continue
       if (opts.titleOnly === true && doc.role !== 'title') continue
@@ -701,11 +755,82 @@ export class SearchEngine {
     return { sid: found.sid, seq: found.seq, role: found.role, time: found.time, text: found.text, at }
   }
 
-  /** 空查询时展示最近会话。 */
-  listSessions(limit: number): { sid: string; title: string; cwd: string; docs: number; mtimeMs: number }[] {
+  /**
+   * 某个工作区的文档。缓存按工作区分组，键做过归一（scopeKey）。
+   *
+   * 用会话表（sessions）建映射而不是遍历 docs：一个会话的 cwd 在索引里是常量，
+   * 只需在会话粒度上归一次类，文档侧按 sid 分派。
+   */
+  private docsInScope(scope: string): SearchDoc[] {
+    const want = scopeKey(scope)
+    if (this.scoped === undefined) {
+      const owner = new Map<string, string>()
+      for (const entry of this.sessions.values()) owner.set(entry.sid, scopeKey(entry.cwd))
+      const grouped = new Map<string, SearchDoc[]>()
+      for (const doc of this.docs) {
+        const key = owner.get(doc.sid)
+        if (key === undefined) continue
+        const bucket = grouped.get(key)
+        if (bucket === undefined) grouped.set(key, [doc])
+        else bucket.push(doc)
+      }
+      this.scoped = grouped
+    }
+    return this.scoped.get(want) ?? []
+  }
+
+  /**
+   * 索引里出现过的所有工作区，按最近活动倒序。
+   *
+   * 给面板的「限定工作区」下拉用：用户不必记住路径，点一下就把范围收窄。
+   */
+  workspaces(): WorkspaceInfo[] {
+    const byKey = new Map<string, WorkspaceInfo>()
+    for (const entry of this.sessions.values()) {
+      const key = scopeKey(entry.cwd)
+      if (key === '') continue
+      const known = byKey.get(key)
+      if (known === undefined) {
+        byKey.set(key, { cwd: entry.cwd, title: baseName(entry.cwd), sessions: 1, docs: 0, chars: 0, lastTime: entry.mtimeMs })
+      } else {
+        known.sessions += 1
+        if (entry.mtimeMs > known.lastTime) known.lastTime = entry.mtimeMs
+      }
+    }
+    const docsOf = new Map<string, { docs: number; chars: number; time: number }>()
+    for (const doc of this.docs) {
+      const key = scopeKey(doc.cwd)
+      if (key === '') continue
+      const known = docsOf.get(key)
+      if (known === undefined) docsOf.set(key, { docs: 1, chars: doc.text.length, time: doc.time })
+      else {
+        known.docs += 1
+        known.chars += doc.text.length
+        if (doc.time > known.time) known.time = doc.time
+      }
+    }
+    for (const [key, info] of byKey) {
+      const counted = docsOf.get(key)
+      if (counted !== undefined) {
+        info.docs = counted.docs
+        info.chars = counted.chars
+        if (counted.time > info.lastTime) info.lastTime = counted.time
+      }
+    }
+    const rows = [...byKey.values()]
+    rows.sort((a, b) => b.lastTime - a.lastTime)
+    return rows
+  }
+
+  /** 空查询时展示最近会话；给了 scope 就只列那个工作区的会话。 */
+  listSessions(limit: number, scope = ''): { sid: string; title: string; cwd: string; docs: number; mtimeMs: number }[] {
+    const want = scope.trim() === '' ? '' : scopeKey(scope)
     const counts = new Map<string, number>()
-    for (const doc of this.docs) counts.set(doc.sid, (counts.get(doc.sid) ?? 0) + 1)
-    const rows = [...this.sessions.values()].map((entry) => ({
+    for (const doc of this.docs) {
+      if (want !== '' && scopeKey(doc.cwd) !== want) continue
+      counts.set(doc.sid, (counts.get(doc.sid) ?? 0) + 1)
+    }
+    const rows = [...this.sessions.values()].filter((entry) => want === '' || scopeKey(entry.cwd) === want).map((entry) => ({
       sid: entry.sid,
       title: entry.title,
       cwd: entry.cwd,

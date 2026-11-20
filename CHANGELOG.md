@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0
+
+- **Search scope.** The palette can be limited to one workspace: a scope pill sits at the right end of the
+  tab row and shows the workspace the open conversation belongs to, so results stop at the boundary of the
+  work you are doing; "all workspaces" is one click away.
+- The scope row lists every workspace with its message count, follows the current workspace, and is
+  reachable from the keyboard (`Ctrl W` toggles it, `←`/`→` walk the workspaces) without leaving the input.
+- Scoping really narrows the scan instead of filtering afterwards: documents are grouped per workspace and
+  only the selected group is read. On a 230-session / 31 MB corpus a query drops from 32 ms to 4 ms
+  (`scripts/bench-scope.mjs`).
+- New `GET /dsh-search-everything-api/workspaces` returns workspaces aggregated by working directory
+  (sessions, messages, characters, last activity); `query` and `sessions` accept `scope=<cwd>`.
+- Windows paths are normalised for comparison, so `C:\work\alpha` and `C:/work/alpha` are one workspace.
+
 ## 0.2.0
 
 - The index is now persisted to disk (`$DSH_HOME/storages/dsh-search-everything/`), so a restart no

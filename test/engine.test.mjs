@@ -250,6 +250,47 @@ test('磁盘索引：会话文件变了只重读该文件', () => {
   }
 })
 
+test('限定工作区：只在那一个工作区的文档里搜', () => {
+  const root = seed()
+  try {
+    const engine = new SearchEngine(root)
+    engine.reindexSync()
+    const all = engine.search('Jellyfin', 50)
+    assert.ok(all.total >= 2, '全库里 alpha 的消息能搜到')
+    // beta 里根本没有 Jellyfin：范围一旦指过去，必须一条都不剩。
+    const beta = engine.search('Jellyfin', 50, { scope: 'C:\\work\\beta' })
+    assert.equal(beta.total, 0)
+    // 同一个目录写成正斜杠也必须命中同一个范围（Windows 路径归一）。
+    const alpha = engine.search('Jellyfin', 50, { scope: 'C:/work/alpha' })
+    assert.equal(alpha.total, engine.search('Jellyfin', 50, { scope: 'C:\\work\\alpha' }).total)
+    assert.ok(alpha.total > 0)
+    // 空范围等于全库，不能因为传了空串就返回空。
+    assert.equal(engine.search('Jellyfin', 50, { scope: '' }).total, all.total)
+    // 会话列表同样按范围收窄。
+    assert.equal(engine.listSessions(10, 'C:\\work\\beta').length, 1)
+  } finally {
+    cleanup(root)
+  }
+})
+
+test('工作区聚合：按 cwd 归并会话与消息数', () => {
+  const root = seed()
+  try {
+    const engine = new SearchEngine(root)
+    engine.reindexSync()
+    const list = engine.workspaces()
+    assert.equal(list.length, 2, '两个 cwd 就是两个工作区')
+    const alpha = list.find((item) => item.title === 'alpha')
+    assert.equal(alpha.sessions, 1)
+    // title 伪文档 + 1 条真人消息 + 1 条 assistant = 3；3 条系统回声不计
+    assert.equal(alpha.docs, 3)
+    assert.ok(alpha.chars > 0)
+    assert.ok(list.every((item) => item.cwd !== ''), '不许出现无 cwd 的工作区')
+  } finally {
+    cleanup(root)
+  }
+})
+
 test('磁盘索引：版本或根目录不一致时作废重扫', () => {
   const root = seed()
   const cacheDir = tempRoot('cache3')
