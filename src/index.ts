@@ -3,6 +3,7 @@
  *
  * 职责：把 ~/.dsh/sessions 下的全部会话日志索引进内存，并通过一条 prefix 路由
  * 暴露给浏览器半区（不抢宿主 fallback，也不占用 /api 这个客户端连接专属命名空间）：
+ *   GET /dsh-search-everything-api/refresh           打开搜索框时调一次，增量扫盘
  *   GET /dsh-search-everything-api/query?q=&limit=&role=&sid=
  *   GET /dsh-search-everything-api/sessions?limit=
  *   GET /dsh-search-everything-api/stats
@@ -20,8 +21,16 @@ import { SearchEngine } from './engine.ts'
 export const name = 'dsh-search-everything'
 
 export interface Config {
-  /** 索引巡拣间隔（毫秒）；0 关闭增量巡检。 */
+  /**
+   * 后台定时巡检间隔（毫秒）；默认 0 = 关闭。
+   * 默认走「按需刷新」：打开搜索框时前端调 /refresh 扫一次，平时完全不碰磁盘。
+   */
   refreshIntervalMs?: number
+  /**
+   * 查询侧懒刷新阈值（毫秒）；默认 0 = 查询不触发刷新。
+   * 设成正值时，距上次扫描超过该值的 query/sessions 会先增量扫一遍再回答。
+   */
+  lazyRefreshMs?: number
   /** 单次查询返回上限。 */
   maxResults?: number
   /** 会话根目录；默认 $DSH_HOME/sessions 或 ~/.dsh/sessions。 */
@@ -82,7 +91,8 @@ export function apply(ctx: Context, config: Config = {}): void {
   const root = config.sessionsRoot ?? defaultSessionsRoot()
   const engine = new SearchEngine(root)
   const maxResults = clamp(config.maxResults ?? 50, 1, 200)
-  const refreshIntervalMs = clamp(config.refreshIntervalMs ?? 5000, 0, 600000)
+  const refreshIntervalMs = clamp(config.refreshIntervalMs ?? 0, 0, 600000)
+  const lazyRefreshMs = clamp(config.lazyRefreshMs ?? 0, 0, 600000)
 
   // 首屏不等：先让插件激活成功，建库在后台自己跑完。
   void engine.reindex().catch(() => {})
@@ -135,7 +145,14 @@ export function apply(ctx: Context, config: Config = {}): void {
           writeJson(out, 405, { error: 'method not allowed' })
           return
         }
+        if (sub === 'refresh') {
+          // 前端在打开搜索框时调用：扫一遍变化的会话文件，返回最新统计。
+          const stats = await engine.refresh()
+          writeJson(out, 200, { ok: true, stats })
+          return
+        }
         if (sub === 'query') {
+          if (lazyRefreshMs > 0) await engine.ensureFresh(lazyRefreshMs)
           const q = url.searchParams.get('q') ?? ''
           const limit = clamp(Number(url.searchParams.get('limit') ?? '40') || 40, 1, maxResults)
           const role = url.searchParams.get('role') ?? ''
@@ -146,6 +163,7 @@ export function apply(ctx: Context, config: Config = {}): void {
           return
         }
         if (sub === 'sessions') {
+          if (lazyRefreshMs > 0) await engine.ensureFresh(lazyRefreshMs)
           const limit = clamp(Number(url.searchParams.get('limit') ?? '30') || 30, 1, 200)
           writeJson(out, 200, { ok: true, sessions: engine.listSessions(limit), stats: engine.stats() })
           return
@@ -165,6 +183,78 @@ export function apply(ctx: Context, config: Config = {}): void {
         }
         if (sub === 'stats') {
           writeJson(out, 200, { ok: true, stats: engine.stats() })
+          return
+        }
+        if (sub === 'debug') {
+          const sc = (ctx as any).get?.('sessions')
+          const list = (sc?.list?.() ?? []).map((s: any) => ({ id: s.id, cwd: s.header?.cwd }))
+          const fs2 = (ctx as any).get?.('sessionQuery')
+          let disk: unknown = null
+          let qerr = ''
+          try {
+            const rec = await fs2?.listSessions?.(undefined)
+            disk = (rec ?? []).map((x: any) => ({ id: x.header?.id, cwd: x.header?.cwd, st: x.formatStatus }))
+          } catch (e) {
+            qerr = String(e)
+          }
+          const node_fs = await import('node:fs')
+          const dirs = node_fs.readdirSync(root)
+          const detail: any = {}
+          for (const d of dirs) {
+            const sub = node_fs.readdirSync(path.join(root, d))
+            detail[d] = sub.map((s) => ({ s, files: node_fs.readdirSync(path.join(root, d, s)) }))
+          }
+          const cat = await import('@deepseek-ai/dsh-session-format-catalog')
+          const dec: any = {}
+          for (const d of dirs) for (const s of node_fs.readdirSync(path.join(root, d))) {
+            const f2 = path.join(root, d, s, 'session.v4.jsonl.zstd')
+            try {
+              const z = (await import('node:zlib')).default
+              const txt = z.zstdDecompressSync(node_fs.readFileSync(f2)).toString('utf8')
+              const first = txt.split('\n')[0]
+              dec[s] = cat.sessionFormatCatalog.readHeader(JSON.parse(first)).status
+            } catch (e) {
+              dec[s] = 'ERR ' + String(e).slice(0, 120)
+            }
+          }
+          const oneId = Object.keys(dec)[0] ?? ''
+          let docErr = ''
+          let docRes: any = null
+          try {
+            docRes = await fs2.readSession(oneId)
+            docRes = { header: docRes.header, events: (docRes.events ?? []).length }
+          } catch (e) {
+            docErr = String(e).slice(0, 300)
+          }
+          let rawErr = ''
+          let rawOk: any = null
+          const fsSvc: any = (ctx as any).get?.('sessionPersistence') ?? (ctx as any).get?.('sessions')
+          let svcNames: string[] = []
+          try {
+            svcNames = ['sessionPersistence', 'persistence', 'sessions'].filter((n) => (ctx as any).get?.(n) !== undefined)
+          } catch {}
+          try {
+            const pers: any = (ctx as any).get?.('sessionPersistence')
+            const lst = await pers?.list?.({})
+            rawOk = (lst ?? []).length
+          } catch (e) {
+            rawErr = String(e).slice(0, 200)
+          }
+          const pers: any = (ctx as any).get?.('sessionPersistence')
+          const info: any = { root: pers?.root, compression: pers?.compression }
+          try { info.projects = await pers.listProjectDirs() } catch (e) { info.projectsErr = String(e).slice(0, 200) }
+          try { info.genCount = (await pers.listGenerations()).length } catch (e) { info.genErr = String(e).slice(0, 200) }
+          try { info.artCount = (await pers.listArtifacts()).length } catch (e) { info.artErr = String(e).slice(0, 300) }
+          const pers2: any = (ctx as any).get?.('sessionPersistence')
+          let logsErr = ''
+          let logsOk: any = null
+          try {
+            const lg = await pers2.requireStoredLog(oneId)
+            logsOk = { headerId: lg.header?.id, events: (lg.events ?? []).length, inherited: lg.inheritedEventCount }
+          } catch (e) {
+            logsErr = String(e).slice(0, 400)
+          }
+          writeJson(out, 200, { ok: true, live: list, root, hasQuery: fs2 !== undefined, disk, qerr, oneId, docRes, docErr, svcNames, rawOk, rawErr, info, logsOk, logsErr })
           return
         }
         writeJson(out, 404, { error: 'not found' })

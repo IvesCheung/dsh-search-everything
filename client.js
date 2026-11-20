@@ -10,7 +10,7 @@
  * 所以真正做到「打字就有」。
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-search-everything',
+  id: '@local/dsh-search-everything',
   factory: (require) => {
     const exports = {}
 
@@ -500,7 +500,7 @@ window.__ModuleLoader__.load({
         }
 
         list = el('div', 'dse_list')
-        foot = el('div', 'dse_foot')
+        foot = el('div', 'dse_foot', '正在读取索引…')
 
         panel.append(head, tabs, list, foot)
         backdrop.appendChild(panel)
@@ -515,6 +515,23 @@ window.__ModuleLoader__.load({
         document.body.appendChild(backdrop)
         input.focus()
         void showRecent()
+        void warmup()
+      }
+
+      /**
+       * 打开面板即触发一次增量扫描：索引平时完全不巡检磁盘，靠这一下变新鲜。
+       * 扫完若用户还没开始输入（仍是最近列表），就把列表与页脚换成最新数据。
+       */
+      async function warmup() {
+        const mine = series
+        try {
+          const data = await api('/refresh', {})
+          if (mine !== series) return
+          if (lastQuery === '') void showRecent()
+          else void run(lastQuery)
+        } catch {
+          // 刷新失败不影响已有索引，静默即可。
+        }
       }
 
       function teardown() {

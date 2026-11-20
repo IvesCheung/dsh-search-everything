@@ -210,6 +210,8 @@ export class SearchEngine {
   private lastIndexAt = 0
   private error: string | undefined
   private generation = 0
+  private lastCheckAt = 0
+  private checking: Promise<SearchStats> | undefined
 
   constructor(root: string) {
     this.root = root
@@ -277,8 +279,28 @@ export class SearchEngine {
     return this.stats()
   }
 
-  /** 增量：只重扫 mtime/size 变了的文件（会话日志是追加写的）。 */
+  /**
+   * 按需增量：调用方（打开搜索框、配置了懒刷新的查询）要求时才扫。
+   * minIntervalMs 内的重复调用直接返回，避免连打键盘时反复 stat 全库。
+   */
+  async ensureFresh(minIntervalMs = 0): Promise<SearchStats> {
+    if (minIntervalMs > 0 && Date.now() - this.lastCheckAt < minIntervalMs) return this.stats()
+    return this.refresh()
+  }
+
+  /** 增量：只重扫 mtime/size 变了的文件（会话日志是追加写的）。并发调用合并成一次。 */
   async refresh(): Promise<SearchStats> {
+    if (this.checking !== undefined) return this.checking
+    const run = this.refreshOnce()
+    this.checking = run
+    try {
+      return await run
+    } finally {
+      this.checking = undefined
+    }
+  }
+
+  private async refreshOnce(): Promise<SearchStats> {
     if (this.indexing) return this.stats()
     const started = Date.now()
     this.indexing = true
@@ -302,11 +324,13 @@ export class SearchEngine {
       }
       this.lastIndexMs = Date.now() - started
       this.lastIndexAt = Date.now()
+      this.lastCheckAt = Date.now()
       this.error = undefined
     } catch (error) {
       this.error = error instanceof Error ? error.message : String(error)
     } finally {
       this.indexing = false
+      this.lastCheckAt = Date.now()
     }
     return this.stats()
   }

@@ -1,5 +1,6 @@
 - insert:
     - id: dsh-search-everything
-      name: dsh-search-everything
+      name: 'dsh-search-everything'
       config:
-        refreshIntervalMs: 5000
+        refreshIntervalMs: 0
+        lazyRefreshMs: 0

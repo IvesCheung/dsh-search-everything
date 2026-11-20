@@ -151,6 +151,30 @@ test('增量 refresh 只重读变化过的文件', () => {
   }
 })
 
+test('ensureFresh 在阈值内不重复扫盘，并发 refresh 合并成一次', async () => {
+  const root = seed()
+  try {
+    const engine = new SearchEngine(root)
+    engine.reindexSync()
+
+    // lastCheckAt 是私有字段，测试直接读它（运行时都在同一个对象上）
+    engine.lastCheckAt = Date.now() - 1_000
+    const stamp = engine.lastCheckAt
+    await engine.ensureFresh(60_000)
+    assert.equal(engine.lastCheckAt, stamp, '阈值内不应再扫')
+
+    // 阈值 0 = 每次都扫（扫完检查时间戳会前进）
+    await engine.ensureFresh(0)
+    assert.ok(engine.lastCheckAt > stamp, '阈值 0 应真的扫了一次')
+
+    // 并发调两次 refresh：内部合并，两次拿到的都是同一份结果对象的值
+    const [a, b] = await Promise.all([engine.refresh(), engine.refresh()])
+    assert.deepEqual(a, b)
+  } finally {
+    cleanup(root)
+  }
+})
+
 test('权限不足或损坏的会话文件不会拖垮索引', () => {
   const root = tempRoot('broken')
   try {

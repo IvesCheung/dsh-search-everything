@@ -75,9 +75,9 @@ So the simplest path stays: an in-memory document array with a pre-lowercased `l
         │  zstd inflate + per-line JSON (only user/message, assistant/message, session/title, session header)
         ▼
 Host half (src/engine.ts)  — in-memory index: { sid, title, cwd, role, seq, time, text, lower }
-        │  full build asynchronously after start; afterwards only files whose mtime/size changed are re-read every 5 s
+        │  full build asynchronously after start; afterwards rescanned on demand — no background polling
         ▼
-GET /dsh-search-everything-api/{query,sessions,doc,stats}   (loopback only)
+GET /dsh-search-everything-api/{refresh,query,sessions,doc,stats}   (loopback only)
         ▼
 Browser half (client.js)  — Ctrl K palette, list rendering, keyboard handling, jump & highlight
 ```
@@ -103,6 +103,12 @@ rendering), then:
    `scrollIntoView` gets snapped back), and finally `scrollIntoView({block:'center'})` plus a
    2.6 s highlight.
 
+**Refreshing is on demand, not on a timer.** The index is built once after start (about 15 s for
+31 MB of session text) and then never touched until something asks for it: the palette calls
+`/refresh` the moment it opens, which stats every session file and re-reads only those whose
+mtime/size changed — 0.8 s when nothing changed, and the usual case (one session being written) is
+one file. Between openings the plugin does zero disk I/O, so an idle host stays idle.
+
 ## Configuration
 
 In the `config` block of `cordis.patch.yml`:
@@ -112,7 +118,8 @@ In the `config` block of `cordis.patch.yml`:
     - id: dsh-search-everything
       name: dsh-search-everything
       config:
-        refreshIntervalMs: 5000   # incremental scan interval, 0 = disabled
+        refreshIntervalMs: 0      # background poll interval; 0 = off (default, on-demand)
+        lazyRefreshMs: 0          # if > 0, query/sessions rescan first when the last scan is older than this
         maxResults: 50            # per-query result cap
         sessionsRoot: ''          # session root; defaults to $DSH_HOME/sessions or ~/.dsh/sessions
 ```
@@ -121,7 +128,7 @@ In the `config` block of `cordis.patch.yml`:
 
 ```bash
 npm run build     # src/*.ts -> lib/*.js (Node built-in stripTypeScriptTypes, no third-party deps)
-npm test          # node --test test/ (7 cases over synthetic corpora: indexing/filtering/refresh/corrupt files)
+npm test          # node --test test/ (8 cases over synthetic corpora: indexing/filtering/refresh/corrupt files)
 npm run bench     # index build and query timings on the real corpus
 ```
 
