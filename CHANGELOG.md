@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.1
+
+- Scope selection is a real dropdown instead of an always-expanding pill row: the control keeps a single
+  capsule width in the tab row, opens a menu listing every workspace with its message count, marks the
+  workspace you are currently in, and closes on pick, on outside click or on `Esc`.
+- The dropdown is keyboard driven: `Ctrl W` opens it, `↑`/`↓` walk the entries, `Enter` applies, `Esc`
+  closes and returns to the input. The chosen entry carries a check mark; hovering and moving are the same
+  highlight, so the mouse and the keyboard never disagree about what is selected.
+- `screenshots/scope.png` re-shot for the dropdown.
+
 ## 0.3.0
 
 - **Search scope.** The palette can be limited to one workspace: a scope pill sits at the right end of the

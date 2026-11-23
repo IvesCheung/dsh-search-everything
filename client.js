@@ -34,22 +34,33 @@ window.__ModuleLoader__.load({
       '.dse_kbd{flex:none;font-size:11px;line-height:16px;padding:1px 6px;border-radius:5px;color:var(--dsw-alias-label-tertiary);',
       'background:var(--dsw-alias-bg-layer-1);box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l2)}',
       '.dse_tabs{display:flex;gap:6px;padding:8px 12px 0;flex-wrap:wrap;align-items:center}',
-      '.dse_scope{flex:none;margin-left:auto;max-width:190px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;',
-      'text-align:left;font-size:11px;line-height:19px;padding:2px 9px;border-radius:999px;cursor:pointer;border:0;font-family:inherit;',
+      '.dse_scopeWrap{position:relative;flex:none;margin-left:auto;display:flex}',
+      '.dse_scope{display:inline-flex;align-items:center;gap:5px;max-width:210px;min-width:0;cursor:pointer;border:0;font-family:inherit;',
+      'text-align:left;font-size:11.5px;line-height:20px;padding:3px 8px 3px 10px;border-radius:6px;',
       'color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);',
       'box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l2)}',
       '.dse_scope:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-2)}',
-      '.dse_scope[data-on="1"]{color:var(--dsw-alias-state-warn-primary);background:var(--dsw-alias-bg-layer-2);',
-      'box-shadow:inset 0 0 0 .5px var(--dsw-alias-state-warn-primary)}',
-      '.dse_chips{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px;border-bottom:.5px solid var(--dsw-alias-border-l3);',
-      'max-height:150px;overflow-y:auto;scrollbar-width:thin}',
-      '.dse_chip{font-size:11.5px;line-height:19px;padding:2px 9px;border-radius:999px;cursor:pointer;border:0;font-family:inherit;',
-      'color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);',
-      'box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l2)}',
-      '.dse_chip:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}',
-      '.dse_chip[data-on="1"]{color:var(--dsw-alias-state-warn-primary);box-shadow:inset 0 0 0 .5px var(--dsw-alias-state-warn-primary)}',
-      '.dse_chip[data-current="1"]{border:0;box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l2)}',
-      '.dse_chipN{opacity:.6;margin-left:5px;font-variant-numeric:tabular-nums}',
+      '.dse_scope[data-on="1"]{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-2);',
+      'box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l3)}',
+      '.dse_scope[aria-expanded="true"]{box-shadow:inset 0 0 0 1px var(--dsw-alias-state-warn-primary)}',
+      '.dse_scopeName{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}',
+      '.dse_scopeName[data-on="1"]{color:var(--dsw-alias-state-warn-primary)}',
+      '.dse_scopeCaret{flex:none;width:10px;height:10px;opacity:.55;transition:transform .12s ease}',
+      '.dse_scope[aria-expanded="true"] .dse_scopeCaret{transform:rotate(180deg);opacity:.9}',
+      '.dse_menu{position:absolute;top:calc(100% + 6px);right:0;z-index:5;width:252px;max-height:288px;overflow-y:auto;',
+      'padding:4px;border-radius:8px;scrollbar-width:thin;background:var(--dsw-alias-bg-layer-3);',
+      'box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l2),0 8px 24px rgba(0,0,0,.16)}',
+      '.dse_menu[hidden]{display:none}',
+      '.dse_opt{display:flex;align-items:center;gap:8px;width:100%;padding:6px 8px;border:0;border-radius:6px;',
+      'background:transparent;font-family:inherit;font-size:12px;line-height:18px;text-align:left;cursor:pointer;',
+      'color:var(--dsw-alias-label-primary)}',
+      '.dse_opt[data-active="1"]{background:var(--dsw-alias-bg-layer-2)}',
+      '.dse_optName{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dse_optN{flex:none;font-size:11px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}',
+      '.dse_optCheck{flex:none;width:12px;height:12px;color:var(--dsw-alias-state-warn-primary)}',
+      '.dse_optHere{flex:none;font-size:10px;line-height:15px;padding:0 5px;border-radius:4px;',
+      'color:var(--dsw-alias-label-tertiary);background:var(--dsw-alias-bg-layer-1)}',
+      '.dse_menuSep{height:.5px;margin:4px 6px;background:var(--dsw-alias-border-l3)}',
       '.dse_tab{font-size:12px;line-height:20px;padding:2px 10px;border-radius:999px;cursor:pointer;border:0;',
       'background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);font-family:inherit}',
       '.dse_tab[data-on="1"]{background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);font-weight:600}',
@@ -538,9 +549,12 @@ window.__ModuleLoader__.load({
       let lastQuery = ''
       /** 空串 = 所有工作区。收窄后查询只扫那个工作区的文档，不发全库再过滤。 */
       let scope = ''
-      let chipsRow = null
       let scopeBtn = null
-      let chipNodes = []
+      let scopeName = null
+      let scopeMenu = null
+      let optNodes = []
+      let optActive = 0
+      let menuOpen = false
 
       function build() {
         scope = currentScope(ctx)
@@ -569,30 +583,40 @@ window.__ModuleLoader__.load({
           })
           tabs.appendChild(btn)
         }
+        // 范围选择器：一个下拉框，收起时只占一个胶囊宽，展开才铺开工作区列表。
+        const scopeWrap = el('div', 'dse_scopeWrap')
         scopeBtn = el('button', 'dse_scope')
         scopeBtn.type = 'button'
-        scopeBtn.title = '限定搜索范围（Ctrl+W 切换）'
-        scopeBtn.textContent = '所有工作区'
-        scopeBtn.dataset.on = '0'
-        syncScopeBtn()
-        scopeBtn.addEventListener('click', () => {
-          chipsRow.hidden = !chipsRow.hidden
-          if (!chipsRow.hidden) void loadWorkspaces()
+        scopeBtn.setAttribute('aria-haspopup', 'listbox')
+        scopeBtn.setAttribute('aria-expanded', 'false')
+        scopeName = el('span', 'dse_scopeName', '所有工作区')
+        const caret = document.createElement('span')
+        caret.className = 'dse_scopeCaret'
+        caret.innerHTML = '<svg viewBox="0 0 10 10" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4 5 7 8 4"/></svg>'
+        scopeBtn.append(scopeName, caret)
+        scopeBtn.addEventListener('click', (event) => {
+          event.stopPropagation()
+          toggleMenu(!menuOpen)
         })
-        const sep = el('span', 'dse_kbd', '范围')
-        tabs.append(sep, scopeBtn)
-
-        chipsRow = el('div', 'dse_chips')
-        chipsRow.hidden = true
-        chipsRow.addEventListener('keydown', onKey)
+        scopeMenu = el('div', 'dse_menu')
+        scopeMenu.hidden = true
+        scopeMenu.setAttribute('role', 'listbox')
+        scopeMenu.addEventListener('keydown', onKey)
+        scopeWrap.append(scopeBtn, scopeMenu)
+        tabs.append(scopeWrap)
+        syncScopeBtn()
 
         list = el('div', 'dse_list')
         foot = el('div', 'dse_foot', '正在读取索引…')
 
-        panel.append(head, tabs, chipsRow, list, foot)
+        panel.append(head, tabs, list, foot)
         backdrop.appendChild(panel)
         backdrop.addEventListener('mousedown', (event) => {
           if (event.target === backdrop) closeAll()
+        })
+        // 点别处（面板内任意位置）都算收起下拉，跟系统菜单一样。
+        backdrop.addEventListener('mousedown', (event) => {
+          if (menuOpen && scopeMenu !== null && !scopeMenu.contains(event.target) && event.target !== scopeBtn && !scopeBtn.contains(event.target)) toggleMenu(false)
         })
         input.addEventListener('input', () => {
           if (debounce !== null) clearTimeout(debounce)
@@ -606,22 +630,38 @@ window.__ModuleLoader__.load({
       }
 
       function syncScopeBtn() {
-        if (scopeBtn === null) return
-        scopeBtn.textContent = scopeLabel(scope)
+        if (scopeBtn === null || scopeName === null) return
+        const label = scopeLabel(scope)
+        scopeName.textContent = label
+        scopeName.dataset.on = scope === '' ? '0' : '1'
         scopeBtn.dataset.on = scope === '' ? '0' : '1'
-        scopeBtn.title = scope === '' ? '限定搜索范围（Ctrl+W 切换）' : '只在这个工作区里搜：' + scope + '（Ctrl+W 切换）'
+        scopeBtn.title = (scope === '' ? '在所有工作区里搜' : '只在这个工作区里搜：' + scope) + '（点击或 Ctrl+W 切换）'
       }
 
       /** 应用一个范围并立刻重跑当前查询（打开面板时还会预置成当前工作区）。 */
       function setScope(next) {
         scope = String(next || '')
         syncScopeBtn()
-        for (const node of chipNodes) node.dataset.on = scopeKey(node.dataset.cwd || '') === scopeKey(scope) ? '1' : '0'
+        for (const node of optNodes) {
+          const on = scopeKey(node.dataset.cwd || '') === scopeKey(scope)
+          node.dataset.on = on ? '1' : '0'
+        }
+        toggleMenu(false)
         if (lastQuery === '') void showRecent()
         else void run(lastQuery)
       }
 
-      /** 工作区列表：次数 + 消息数一眼可见，用户按「哪个仓」挑，不用记路径。 */
+      /** 下拉的显隐，顺便把选中项对齐到当前范围（键盘一进来就能上下挑）。 */
+      function toggleMenu(next) {
+        if (scopeMenu === null || scopeBtn === null) return
+        menuOpen = next === undefined ? !menuOpen : Boolean(next)
+        scopeMenu.hidden = !menuOpen
+        scopeBtn.setAttribute('aria-expanded', menuOpen ? 'true' : 'false')
+        if (menuOpen) void loadWorkspaces()
+        else if (scopeMenu !== null) scopeMenu.style.top = ''
+      }
+
+      /** 工作区列表：会话数与消息数一眼可见，按「哪个仓」挑，不用记路径。 */
       async function loadWorkspaces() {
         let data
         try {
@@ -630,29 +670,53 @@ window.__ModuleLoader__.load({
           return
         }
         const here = scopeKey(currentScope(ctx))
-        chipNodes = []
-        chipsRow.textContent = ''
-        const all = el('button', 'dse_chip', '所有工作区')
-        all.type = 'button'
-        all.dataset.cwd = ''
-        all.dataset.on = scope === '' ? '1' : '0'
-        all.addEventListener('click', () => setScope(''))
-        chipNodes.push(all)
-        chipsRow.appendChild(all)
-        for (const item of data.workspaces || []) {
-          if (!item.cwd) continue
-          const chip = el('button', 'dse_chip', item.title || scopeLabel(item.cwd))
-          chip.type = 'button'
-          chip.title = item.cwd + '（' + item.sessions + ' 个会话）'
-          chip.dataset.cwd = item.cwd
-          chip.dataset.on = scopeKey(item.cwd) === scopeKey(scope) ? '1' : '0'
-          if (scopeKey(item.cwd) === here) chip.dataset.current = '1'
-          const count = el('span', 'dse_chipN', String(item.docs))
-          chip.appendChild(count)
-          chip.addEventListener('click', () => setScope(item.cwd))
-          chipNodes.push(chip)
-          chipsRow.appendChild(chip)
-        }
+        const list = [{ cwd: '', title: '所有工作区', docs: data.stats ? data.stats.docs : 0, sessions: data.stats ? data.stats.sessions : 0 }]
+          .concat((data.workspaces || []).filter((item) => item.cwd))
+        optNodes = []
+        scopeMenu.textContent = ''
+        list.forEach((item, index) => {
+          if (index === 1) scopeMenu.appendChild(el('div', 'dse_menuSep'))
+          const opt = el('button', 'dse_opt')
+          opt.type = 'button'
+          opt.setAttribute('role', 'option')
+          opt.dataset.cwd = item.cwd
+          opt.dataset.on = scopeKey(item.cwd) === scopeKey(scope) ? '1' : '0'
+          opt.title = item.cwd === '' ? '不限范围，搜索所有工作区' : item.cwd
+          const name = el('span', 'dse_optName', item.title || scopeLabel(item.cwd))
+          opt.appendChild(name)
+          if (item.cwd !== '' && scopeKey(item.cwd) === here) opt.appendChild(el('span', 'dse_optHere', '当前'))
+          const count = el('span', 'dse_optN', String(item.docs ?? 0))
+          opt.appendChild(count)
+          const check = document.createElement('span')
+          check.className = 'dse_optCheck'
+          check.innerHTML = '<svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 6.4 4.6 9 10 3.2"/></svg>'
+          check.style.visibility = opt.dataset.on === '1' ? 'visible' : 'hidden'
+          opt.appendChild(check)
+          opt.addEventListener('mouseenter', () => setOptActive(index))
+          opt.addEventListener('click', () => setScope(item.cwd))
+          optNodes.push(opt)
+          scopeMenu.appendChild(opt)
+        })
+        const at = optNodes.findIndex((node) => node.dataset.on === '1')
+        setOptActive(at < 0 ? 0 : at)
+      }
+
+      /** 下拉里的高亮项；上下键与悬停都走这里，选中与否由 data-on 单独表示。 */
+      function setOptActive(index) {
+        if (optNodes.length === 0) return
+        optActive = (index + optNodes.length) % optNodes.length
+        optNodes.forEach((node, i) => { node.dataset.active = i === optActive ? '1' : '0' })
+        const node = optNodes[optActive]
+        if (node !== undefined) node.scrollIntoView({ block: 'nearest' })
+      }
+
+      function moveOpt(step) {
+        setOptActive(optActive + step)
+      }
+
+      function chooseOpt() {
+        const node = optNodes[optActive]
+        if (node !== undefined) setScope(node.dataset.cwd || '')
       }
 
       /**
@@ -685,6 +749,30 @@ window.__ModuleLoader__.load({
       }
 
       function onKey(event) {
+        // 下拉展开时，方向键/回车归它，别让列表跟着动。
+        if (menuOpen) {
+          if (event.key === 'Escape' || (event.key === 'w' && event.ctrlKey)) {
+            event.preventDefault()
+            toggleMenu(false)
+            input.focus()
+            return
+          }
+          if (event.key === 'ArrowDown') {
+            event.preventDefault()
+            moveOpt(1)
+            return
+          }
+          if (event.key === 'ArrowUp') {
+            event.preventDefault()
+            moveOpt(-1)
+            return
+          }
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            chooseOpt()
+            return
+          }
+        }
         if (event.key === 'Escape') {
           event.preventDefault()
           closeAll()
@@ -705,18 +793,10 @@ window.__ModuleLoader__.load({
           cycleTab(event.shiftKey ? -1 : 1)
           return
         }
-        // Ctrl+W 开合范围条；打开时 ←/→ 在范围之间切换（都被这里先吃掉，不进输入框）。
+        // Ctrl+W 开合范围下拉（焦点留在输入框，键盘不必换手）。
         if (event.key === 'w' && event.ctrlKey) {
           event.preventDefault()
-          if (chipsRow !== null) {
-            chipsRow.hidden = !chipsRow.hidden
-            if (!chipsRow.hidden) void loadWorkspaces()
-          }
-          return
-        }
-        if (chipsRow !== null && !chipsRow.hidden && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
-          event.preventDefault()
-          moveChip(event.key === 'ArrowRight' ? 1 : -1)
+          toggleMenu(!menuOpen)
           return
         }
         // 输入框里专注打字时，左右方向键留给光标；空查询时才用来切 tab。
@@ -730,16 +810,6 @@ window.__ModuleLoader__.load({
           event.preventDefault()
           void activate(rows[active])
         }
-      }
-
-      // 范围条上的左右移动：开合只是 visibility，焦点留在输入框，键盘不必换手。
-      function moveChip(step) {
-        if (chipNodes.length === 0) return
-        const at = chipNodes.findIndex((node) => node.dataset.on === '1')
-        const next = chipNodes[(((at < 0 ? 0 : at) + step) % chipNodes.length + chipNodes.length) % chipNodes.length]
-        if (next === undefined) return
-        setScope(next.dataset.cwd || '')
-        next.scrollIntoView({ block: 'nearest', inline: 'nearest' })
       }
 
       function move(delta) {

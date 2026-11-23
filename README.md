@@ -5,7 +5,7 @@ across **every session of every workspace** — session titles, your own message
 then hit Enter to jump straight to that message inside the conversation and highlight it.
 
 - One search box, four tabs: All / Sessions / My messages / Assistant replies
-- Optional scope: limit the search to one workspace (the pill on the tab row), down to 4 ms on a 31 MB corpus
+- Optional scope: limit the search to one workspace from the dropdown on the tab row — 4 ms instead of 32 ms on a 31 MB corpus
 - Index lives in the host process and is persisted to disk: a restart restores it in ~0.3 s instead of
   re-parsing every log, and a query over ~30 MB / 18k messages takes 10–90 ms
 - Clicking a result switches workspace, switches session, scrolls to the message and flashes it
@@ -13,8 +13,9 @@ then hit Enter to jump straight to that message inside the conversation and high
 
 ![palette](screenshots/palette.png)
 
-The scope pill limits the search to one workspace — here the palette is already scoped to `atlas-api`,
-and `Ctrl W` opens the row with every workspace and its message count:
+The scope dropdown limits the search to one workspace. It opens on the workspace of the conversation
+you are in (`atlas-api` below, marked *当前*), lists every workspace with its message count, and keeps a
+single capsule width while it is closed:
 
 ![scope](screenshots/scope.png)
 
@@ -50,8 +51,8 @@ After the restart:
 | Move selection | `↑` `↓` (or `Ctrl P` / `Ctrl N`) |
 | Open selected result | `Enter` |
 | Switch tab | `Tab` / `Shift Tab`, or `→` `←` when the input is empty |
-| Toggle the workspace scope row | `Ctrl W` |
-| Pick a workspace while the scope row is open | `→` `←`, or click |
+| Open / close the workspace dropdown | `Ctrl W`, or click the scope control |
+| Pick a workspace while the dropdown is open | `↑` `↓` then `Enter`, or click |
 | Close | `Esc` |
 
 Query syntax:
@@ -116,7 +117,8 @@ rendering), then:
 **Scoping narrows the scan, it does not filter afterwards.** Documents are grouped by their session's
 working directory once and cached, and a scoped query reads only that group — on the 31 MB corpus
 `search` goes from 32 ms to 4 ms and `Everything` from 22 ms to 2 ms. The palette opens on the workspace
-the current conversation belongs to; `Ctrl W` (or the pill) switches to another one or back to all.
+the current conversation belongs to; the control at the right end of the tab row switches to another one
+or back to all.
 
 **The index survives restarts.** Building it means inflating and parsing every session log — about
 4.6 s for 229 sessions / 31 MB, and far worse on a cold page cache. So the documents are written to
