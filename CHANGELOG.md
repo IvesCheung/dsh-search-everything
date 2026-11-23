@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.2
+
+- Both READMEs gained a **Contributing** section: issues are the front door for bug reports and feature
+  requests, with the exact fields that make a report actionable (DSH version, OS, the query, expected vs
+  actual, jump failure mode, console errors) and the two rules for pull requests (Node built-ins only,
+  `npm test` green).
+- No code change: the plugin behaves exactly like 0.3.1.
+
 ## 0.3.1
 
 - Scope selection is a real dropdown instead of an always-expanding pill row: the control keeps a single

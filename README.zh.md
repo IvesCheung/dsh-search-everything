@@ -160,6 +160,25 @@ node scripts/bench-cache.mjs   # 真实语料上的冷建库 vs 热恢复
 - 跳转靠文本摘录在 DOM 里匹配：目标消息几乎全是标记（纯表格、纯代码块）时精度会下降，
   插件会退化成「打开会话并尽量滚近」。
 
+## 参与改进
+
+**欢迎提 issue 来更新这个插件。** Bug 和功能建议一样欢迎——这个插件就是靠这个变好的，也是最快拿到修复的路：
+
+- 🐞 [报一个 bug](https://github.com/IvesCheung/dsh-search-everything/issues/new?template=bug_report.md)
+- 💡 [提一个功能建议](https://github.com/IvesCheung/dsh-search-everything/issues/new)
+- 💬 [随便问点什么](https://github.com/IvesCheung/dsh-search-everything/issues)
+
+一个我能直接动手的 bug 报告包含：DSH 版本（`dsh --version`）、操作系统、你输入的完整查询、你期望什么、
+实际发生了什么。如果是跳转问题，请说清是「面板没能切过去」还是「切过去了但没滚到命中位置」，并把浏览器
+控制台里的红色报错贴上来。欢迎贴面板截图，但请把你自己会话里的隐私内容裁掉。
+
+功能建议最好写**你的工作流需要什么**（「我想找到写这个文件的那次工具调用」），而不是怎么写。需要较大
+改动才能做的方向：分词或前缀索引（让子词查询更便宜）、搜工具输出与附件名、以及 Web 之外的平台。
+
+**也欢迎 PR**，小范围、自洽的改动最好。两条规则：只用 Node 内置模块（不要第三方运行时依赖），
+提交前 `npm test` 全绿。`client.js` 没有构建步骤，宿主半区要 `npm run build`。不确定改动合不合
+适就先开个 issue 聊两句，比 PR 被打回省事。
+
 ## 许可证
 
 MIT

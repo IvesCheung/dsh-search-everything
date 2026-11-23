@@ -181,6 +181,30 @@ dependencies.
   (pure tables, pure code blocks) the precision degrades, and the plugin falls back to opening the
   session and scrolling as close as it can.
 
+## Contributing
+
+**Issues are the front door.** Bug reports and feature requests are equally welcome — that is how this
+plugin gets better, and it is the fastest route to a fix:
+
+- 🐞 [Report a bug](https://github.com/IvesCheung/dsh-search-everything/issues/new?template=bug_report.md)
+- 💡 [Request a feature](https://github.com/IvesCheung/dsh-search-everything/issues/new)
+- 💬 [Ask anything](https://github.com/IvesCheung/dsh-search-everything/issues)
+
+A report I can act on has: your DSH version (`dsh --version`), the OS, the exact query you typed, what you
+expected and what happened. For a jump problem, say whether the palette failed to switch session or
+switched but did not scroll to the hit — and paste anything red from the browser console. Screenshots of
+the palette are welcome, but please crop out anything private from your own sessions.
+
+Feature requests are most useful as *what your workflow needs* ("I want to find the tool call that wrote
+this file") rather than *how to implement it*. Known directions that would need a bigger change:
+tokenizer or prefix indexing to make sub-word queries cheaper, searching tool output and attachment names,
+and platforms other than web.
+
+**Pull requests** are welcome for self-contained changes. Two rules keep this cheap to maintain: Node
+built-ins only (no third-party runtime dependencies), and `npm test` green before you send it.
+`client.js` needs no build step; the host half does (`npm run build`). If you are unsure whether a change
+fits, open an issue first — a short discussion beats a rejected PR.
+
 ## License
 
 MIT
