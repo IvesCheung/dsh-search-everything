@@ -1,5 +1,7 @@
 # dsh-search-everything
 
+**English** · [中文](README.zh.md)
+
 Everything-style global search for [DSH](https://github.com/deepseek-ai/dsh): press **Ctrl K** and search
 across **every session of every workspace** — session titles, your own messages, assistant replies —
 then hit Enter to jump straight to that message inside the conversation and highlight it.
