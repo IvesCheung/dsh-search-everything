@@ -181,6 +181,23 @@ dependencies.
   (pure tables, pure code blocks) the precision degrades, and the plugin falls back to opening the
   session and scrolling as close as it can.
 
+## Who can call the HTTP routes
+
+The host half exposes one prefix route, `/dsh-search-everything-api/*`, and every request goes through
+the host's own admission service before anything is read:
+
+```ts
+ctx.get('connection').requestRejection({ headers: req.headers }) // undefined = allow, 401 / 403 = refuse
+```
+
+That is the same check DSH applies to its own endpoints. It refuses a request whose `Host` header is
+neither loopback nor a trusted host (DNS rebinding), whose `Sec-Fetch-Site` is `cross-site`, whose
+`Origin` does not match the host, and any request from a browser that has no authenticated DSH session —
+so a web page open in the same browser cannot read your sessions through this plugin. The decision is
+taken per request, not once at activation, because a service instance captured at load time is not the
+one serving later traffic. When the host has no `connection` service the routes fall back to accepting
+loopback sockets only.
+
 ## Contributing
 
 **Issues are the front door.** Bug reports and feature requests are equally welcome — that is how this

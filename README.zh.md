@@ -160,6 +160,20 @@ node scripts/bench-cache.mjs   # 真实语料上的冷建库 vs 热恢复
 - 跳转靠文本摘录在 DOM 里匹配：目标消息几乎全是标记（纯表格、纯代码块）时精度会下降，
   插件会退化成「打开会话并尽量滚近」。
 
+## 谁能调用这些 HTTP 路由
+
+Host 半区只注册一条前缀路由 `/dsh-search-everything-api/*`，每个请求在读任何数据之前先过宿主自己的准入服务：
+
+```ts
+ctx.get('connection').requestRejection({ headers: req.headers }) // undefined = 放行，401 / 403 = 拒绝
+```
+
+这就是 DSH 给自己接口用的那把锁：`Host` 头既不是回环也不是受信主机（DNS rebinding）、
+`Sec-Fetch-Site: cross-site`、`Origin` 与 Host 不同源、以及没有已认证 DSH 会话的浏览器请求，一律拒绝——
+所以你浏览器里打开的别的网页没法通过这个插件读你的会话。判定按请求现取现判，不是激活时抓一次，
+因为激活那一刻拿到的服务实例并不是之后真正在服务请求的那一个。宿主没有 `connection` 服务时，
+退回只接受回环套接字。
+
 ## 参与改进
 
 **欢迎提 issue 来更新这个插件。** Bug 和功能建议一样欢迎——这个插件就是靠这个变好的，也是最快拿到修复的路：

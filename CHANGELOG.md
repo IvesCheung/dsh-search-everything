@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.0
+
+- **Every HTTP route now passes the host's access check.** `/dsh-search-everything-api/*` asks
+  `ctx.get('connection').requestRejection({ headers }) — the same admission service DSH uses for its own
+  endpoints — before reading anything, and answers 401 / 403 with a JSON body when it refuses. Requests
+  whose `Host` is not loopback or trusted (DNS rebinding), whose `Sec-Fetch-Site` is `cross-site`, whose
+  `Origin` does not match the host, or that come from a browser without an authenticated DSH session are
+  refused; unauthenticated callers no longer get 200 for anything.
+- The check runs **per request** instead of once at activation. A service instance captured while the
+  plugin was activating answers "allow" forever, which silently disabled the fence.
+- Headers are flattened before they are handed over, so the fence sees the fields the browser actually
+  sent instead of a lazily parsed getter bag.
+- When the host exposes no `connection` service the routes fall back to accepting loopback sockets only.
+- `test/host-access.test.mjs` covers the gate itself (refuse / allow, 401 vs 403, refusal wins over
+  loopback, a throwing check counts as untrusted); the suite is 21 tests.
+- Both READMEs document who can call the routes and why the decision is per request.
+
 ## 0.3.2
 
 - Both READMEs gained a **Contributing** section: issues are the front door for bug reports and feature
